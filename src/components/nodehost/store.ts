@@ -7,6 +7,9 @@ import type { BootstrapDto, ConsoleSession } from './types'
 
 const SESSION_KEY = 'nodehost.console.session'
 
+/** Live-poll interval of the control panel (bootstrap + directory). */
+export const UI_POLL_MS = 5_000
+
 interface NhState {
   data: BootstrapDto | null
   loading: boolean
@@ -64,4 +67,22 @@ export function connectableHosts(data: BootstrapDto | null) {
     if (h.gwPort) list.push({ code: h.code, name: h.name, gwPort: h.gwPort, kind: 'remote' })
   }
   return list
+}
+
+/**
+ * One-click console connection to a LOCAL node (nodes tab shortcut).
+ * Builds the session from the freshest bootstrap state and switches tab.
+ */
+export function openConsoleForLocalNode(code: string, token: string) {
+  const { data, setSession, setTab } = useNh.getState()
+  if (!data) return
+  setSession({
+    hostCode: data.host.code,
+    hostName: data.host.name,
+    gwPort: data.host.gwPort,
+    nodeCode: code,
+    nodeName: data.nodes.find((n) => n.code === code)?.name ?? code,
+    token,
+  })
+  setTab('console')
 }

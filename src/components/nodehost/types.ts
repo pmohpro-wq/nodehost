@@ -1,5 +1,25 @@
 /** Shared DTOs between the kernel REST API and the UI. */
 
+import type { NhpAddress } from '@/core/nodehost/protocol'
+
+/** Outgoing NHP send request from an admin console panel. */
+export interface SendRequest {
+  to: NhpAddress
+  module: string
+  type: string
+  payload: unknown
+}
+
+/** Receipt returned by the kernel's nhp:send ack. */
+export interface SendResult {
+  ok: boolean
+  outcome: string
+  envId: string
+}
+
+/** Shared send callback — ONE implementation lives in the console socket context. */
+export type SendFn = (p: SendRequest, cb?: (r: SendResult) => void) => void
+
 export interface HostDto {
   id: string
   code: string
@@ -47,6 +67,8 @@ export interface DirectoryEntry {
   nodeName: string
   modules: string[]
   adminOnline: boolean
+  /** Demo nodes publish their token for test consoles. */
+  demoToken?: string
 }
 
 export interface LogDto {
@@ -70,6 +92,8 @@ export interface MailRow {
   toHost: string
   toNode: string
   payload: string
+  /** Full NHP envelope JSON (kept for raw view / queued replay). */
+  envelope: string
   status: 'delivered' | 'queued' | 'forwarded' | 'dead'
   attempts: number
   error: string | null

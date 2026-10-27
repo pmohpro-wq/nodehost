@@ -8,29 +8,23 @@ import { useEffect } from 'react'
 import { Header } from '@/components/nodehost/Header'
 import { DashboardTab } from '@/components/nodehost/DashboardTab'
 import { NodesTab } from '@/components/nodehost/NodesTab'
-import { ConsoleTab } from '@/components/nodehost/ConsoleTab'
+import { ConsoleTab } from '@/components/nodehost/console/ConsoleTab'
 import { NetworkTab } from '@/components/nodehost/NetworkTab'
 import { ProtocolTab } from '@/components/nodehost/ProtocolTab'
-import { useNh, loadSession } from '@/components/nodehost/store'
+import { UI_POLL_MS, loadSession, openConsoleForLocalNode, useNh } from '@/components/nodehost/store'
 
 export default function Home() {
-  const { tab, setTab, refresh, session, setSession } = useNh()
+  const { tab, setTab, refresh, setSession } = useNh()
 
-  // Restore persisted console session + start live polling
+  // Restore persisted console session + ONE live poll (bootstrap refresh
+  // also keeps the directory fresh while a console session is active).
   useEffect(() => {
     const s = loadSession()
     if (s) setSession(s)
     void refresh()
-    const t = setInterval(() => void refresh(), 5000)
+    const t = setInterval(() => void refresh(), UI_POLL_MS)
     return () => clearInterval(t)
-  }, [])
-
-  // Keep the live directory fresh while the console is connected
-  useEffect(() => {
-    if (!session) return
-    const t = setInterval(() => void refresh(), 5000)
-    return () => clearInterval(t)
-  }, [session, refresh])
+  }, [setSession, refresh])
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -39,22 +33,7 @@ export default function Home() {
       <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-6">
         {tab === 'dashboard' && <DashboardTab />}
         {tab === 'nodes' && (
-          <NodesTab
-            onGoConsole={(code, token) => {
-              // shortcut: connect console to a LOCAL node in one click
-              const s = loadSession()
-              void s
-              useNh.getState().setSession({
-                hostCode: useNh.getState().data?.host.code ?? '',
-                hostName: useNh.getState().data?.host.name ?? '',
-                gwPort: useNh.getState().data?.host.gwPort ?? null,
-                nodeCode: code,
-                nodeName: useNh.getState().data?.nodes.find((n) => n.code === code)?.name ?? code,
-                token,
-              })
-              setTab('console')
-            }}
-          />
+          <NodesTab onGoConsole={(code, token) => openConsoleForLocalNode(code, token)} />
         )}
         {tab === 'console' && <ConsoleTab />}
         {tab === 'network' && <NetworkTab />}

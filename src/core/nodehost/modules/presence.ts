@@ -6,7 +6,7 @@
  * Kernels additionally exchange rosters inside sys.hello heartbeats;
  * this module lets any node ask any other node directly, on demand.
  */
-import { MODULE_TYPES, makeEnvelope, type HelloPayload, type RosterEntry } from '../protocol'
+import { MODULE_TYPES, makeEnvelope } from '../protocol'
 import { defineModule } from '../interfaces'
 
 export default defineModule({
@@ -30,11 +30,3 @@ export default defineModule({
     return null
   },
 })
-
-/** Helper re-exported for the kernel: shape a roster payload. */
-export function rosterPayload(
-  host: { code: string; name: string; gwPort?: number | null },
-  nodes: RosterEntry[],
-): HelloPayload {
-  return { host, nodes }
-}

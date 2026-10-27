@@ -37,3 +37,41 @@ Stage Summary:
 - نرم‌افزار نودهاست با اینترفیس کامل و مقیاس‌پذیر آماده است: پروتکل NHP v1 (src/core/nodehost/protocol.ts)، قرارداد ماژول توسعه‌دهندگان (interfaces.ts + defineModule)، هسته مستقل per-server (mini-services/nodehost-kernel/)، پنل کنترل فارسی
 - دو نمونهٔ فدرال روی پورت‌های 3003/3013 (آلفا) و 3004/3014 (بتا) با دیتابیس‌های جدا اجرا هستند؛ میزبان گاما به‌صورت عمدی آفلاین است برای نمایش صف
 - نقطه‌های کلیدی برای توسعهٔ متن‌باز: registerModule در index.ts، /ingress برای فدراسیون، /api/nh/* برای UI، io('/?XTransformPort=<gwPort>') برای کنسول
+
+---
+Task ID: 2
+Agent: main (Z.ai)
+Task: مرور معماری و ریفکتور ساختاری عمیق — بدون تغییر رفتار، با هدف تمیز بودن و توسعه‌پذیری کد
+
+Work Log:
+- مرور کامل ~۴۵۰۰ خط: هسته مشترک (protocol/interfaces/modules)، کرنل (kernel/runtime/admin/store/index)، UI (۵ تب + کنسول)، اسکیمای Prisma
+- فاز کرنل — تفکیک مسئولیت‌ها:
+  - config.ts (جدید): همهٔ اعداد قابل‌تنظیم با نام (HEARTBEAT_MS، RETRY_SWEEP_MS، MAX_SEND_ATTEMPTS، POST_TIMEOUT_MS، سقف‌های mailbox و …) — خداحافظ اعداد جادویی پخش‌شده
+  - mailbox.ts (جدید): تنها خانهٔ ماندگاری NhpMessage — رکوردسازیِ ۴ بار تکرارشده در kernel.ts به ۸ تابع معنادار تبدیل شد (recordInbound/recordOutbound/alreadyDelivered/bumpRowAttempt/markRowForwarded/markRowDead + کوئری‌های chat/broadcast/mailbox)
+  - adminSocket.ts (جدید): پروتکل سیمِ سشن ادمین از kernel.ts جدا شد؛ kernel = مغز مسیریابی و بس. نام room از adminRoom() مشترک می‌شود
+  - kernel.ts: postAndTrack() یک‌جا «POST + merge hello + به‌روزرسانی سلامت میزبان» را مدیریت می‌کند (forwardRemote، heartbeatOnce، retryQueued از آن استفاده می‌کنند)؛ شاخه‌های موفقیت/شکست forwardRemote یکی شد
+  - runtime.ts: لاگر ماژول‌ها به log() مشترک store وصل شد (حذف کد تکراری console+sysLog)
+  - admin.ts: هندلرهای if-chain به توابع کوچک تبدیل شد؛ import داینامیکِ per-request به import ایستا؛ kernel از طریق پارامتر پاس می‌شود نه mutation روی Request
+- فاز هستهٔ مشترک: حذف کد مرده (rosterPayload در presence.ts)
+- فاز UI — تفکیک کنسول ۸۵۷ خطی به ۷ فایل:
+  - console/ConsoleTab.tsx (فرم اتصال) + ConsoleSessionView.tsx (مالک سشن) + panels/{Chat,Board,Ping,Raw}Panel.tsx + socket-context.tsx + json.ts
+  - هک جهانی window.__nhSocket (۱۰ نقطه) حذف شد → ConsoleSocketContext با API رفتاری (send/emit/onNhpIn) — پنل‌ها حتی socket.io-client را import نمی‌کنند
+  - page.tsx: دبل-پولینگ رفع شد (یک تایمر ۵ثانیه‌ای به‌جای دو تا)، کد مرده حذف، منطق «رفتن به کنسول نود محلی» به openConsoleForLocalNode() در store منتقل شد
+  - connectableHosts() تکراری در ConsoleTab حذف و از store استفاده شد؛ نوع مشترک SendFn/WireEnvelope در types.ts
+- پاکسازی‌های دیگر:
+  - scaffold «Hello world» (src/app/api/route.ts) حذف شد
+  - start-kernels.sh به مسیرهای نسبی (نسبت به خود اسکریپت) تبدیل شد — قابل‌اجرا در هر checkout و کانتینر بدون ویرایش
+  - @types/bun اضافه شد؛ ignoreBuildErrors از next.config.ts حذف شد — از این به بعد خطای تایپ = شکست build
+  - خطاهای تایپ پنهانِ قدیمی رفع شد (NodesTab token/version، MailRow.envelope، DirectoryEntry.demoToken، narrowing سیگنال‌های process در bun-types)
+- تست دود کامل (تأیید حفظ رفتار):
+  - بوت دو کرنل فدرال + تبادل رستر (دایرکتوری هر دو طرف کامل)
+  - ارسال چت بین‌میزبانی alfa→beta از /ingress → تحویل به صندوق node-b1 ✓
+  - میزبان گاما: outcome=queued + لاگ «unreachable» ✓ (store-and-forward)
+  - پاکت نامعتبر → 422 ✓
+  - tests/smoke-admin-socket.ts (جدید): admin:hello + nhp:send + chat:history + mailbox:list ✓
+  - tsc پاک، eslint پاک، next build موفق، UI + پروکسی /api/nh/bootstrap تست شد
+
+Stage Summary:
+- رفتار بیرونی تغییر نکرده؛ ساختار داخلی کاملاً ماژولار شد: routing (kernel) / persistence (mailbox) / wire-admin (adminSocket) / tuning (config) — هر کدام یک فایل مستقل
+- ایمنی آینده: type-check اجباری در build، تست دود سوکت در tests/، ثابت‌های نام‌دار
+- نقشهٔ توسعهٔ بعدی آسان‌تر شد: ماژول جدید فقط defineModule + registerModule؛ پنل جدید فقط یک فایل در panels/

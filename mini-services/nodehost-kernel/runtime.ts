@@ -16,7 +16,7 @@ import type {
 } from '../../src/core/nodehost/interfaces'
 import type { NhpEnvelope } from '../../src/core/nodehost/protocol'
 import type { Kernel } from './kernel'
-import { prisma } from './store'
+import { log, prisma } from './store'
 
 interface Instance {
   nodeId: string
@@ -186,33 +186,13 @@ export class ModuleRuntime {
 
   private buildLogger(node: INodeIdentity, moduleId: string): ILogger {
     const scope = `mod:${moduleId}@${node.code}`
-    return {
-      info: (msg, data) => {
-        console.log(`[${scope}] ${msg}`, data ?? '')
-        void prisma.sysLog
-          .create({
-            data: { level: 'info', scope, message: msg, data: json(data) },
-          })
-          .catch(() => {})
-      },
-      warn: (msg, data) => {
-        console.warn(`[${scope}] ${msg}`, data ?? '')
-        void prisma.sysLog
-          .create({ data: { level: 'warn', scope, message: msg, data: json(data) } })
-          .catch(() => {})
-      },
-      error: (msg, data) => {
-        console.error(`[${scope}] ${msg}`, data ?? '')
-        void prisma.sysLog
-          .create({ data: { level: 'error', scope, message: msg, data: json(data) } })
-          .catch(() => {})
-      },
-    }
+    // Reuse the kernel-wide logger (console + SysLog table) with a
+    // module-scoped namespace; failures never break module code.
+    const emit =
+      (level: 'info' | 'warn' | 'error') => (msg: string, data?: unknown) =>
+        void log(level, scope, msg, data).catch(() => {})
+    return { info: emit('info'), warn: emit('warn'), error: emit('error') }
   }
-}
-
-function json(v: unknown) {
-  return v === undefined ? '{}' : JSON.stringify(v).slice(0, 2000)
 }
 
 function safeParse<T>(raw: string, fallback: T): T {

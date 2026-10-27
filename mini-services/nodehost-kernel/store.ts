@@ -6,6 +6,7 @@
 import { PrismaClient } from '@prisma/client'
 import type { ModuleRegistration } from '../../src/core/nodehost/interfaces'
 import type { RosterEntry } from '../../src/core/nodehost/protocol'
+import { LOG_TRIM_KEEP } from './config'
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
 
@@ -212,7 +213,7 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
   // Trim ancient logs so the demo db stays small
   const stale = await prisma.sysLog.findMany({
     orderBy: { createdAt: 'desc' },
-    skip: 400,
+    skip: LOG_TRIM_KEEP,
     select: { id: true },
   })
   if (stale.length) {

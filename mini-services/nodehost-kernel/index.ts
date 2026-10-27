@@ -76,7 +76,7 @@ Bun.serve({
       if (!kernel.isBooted && url.pathname !== '/internal/bootstrap') {
         return Response.json({ ok: false, error: 'kernel booting — retry shortly' }, { status: 503 })
       }
-      return await handleApi(req)
+      return await handleApi(req, kernel)
     } catch (err) {
       console.error('[api] unhandled', err)
       await log('error', 'api', 'unhandled error', String(err)).catch(() => {})
@@ -93,11 +93,18 @@ void kernel.boot().catch(async (err) => {
   process.exit(1)
 })
 
-process.on('SIGINT', () => {
+// bun-types narrows process event overloads to Bun-specific events;
+// POSIX signals are still valid at runtime in Bun, so register through
+// a minimal typed surface instead of fighting the global's narrowing.
+type Signal = 'SIGINT' | 'SIGTERM'
+const onSignal = (signal: Signal, handler: () => void) =>
+  (process as unknown as { on(s: Signal, h: () => void): void }).on(signal, handler)
+
+onSignal('SIGINT', () => {
   kernel.shutdown()
   process.exit(0)
 })
-process.on('SIGTERM', () => {
+onSignal('SIGTERM', () => {
   kernel.shutdown()
   process.exit(0)
 })

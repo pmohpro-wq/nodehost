@@ -121,7 +121,12 @@ httpServer.listen(PORT, () => {
 })
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+// (typed via a minimal surface: bun-types narrows process event overloads)
+type Signal = 'SIGTERM' | 'SIGINT'
+const onSignal = (signal: Signal, handler: () => void) =>
+  (process as unknown as { on(s: Signal, h: () => void): void }).on(signal, handler)
+
+onSignal('SIGTERM', () => {
   console.log('Received SIGTERM signal, shutting down server...')
   httpServer.close(() => {
     console.log('WebSocket server closed')
@@ -129,7 +134,7 @@ process.on('SIGTERM', () => {
   })
 })
 
-process.on('SIGINT', () => {
+onSignal('SIGINT', () => {
   console.log('Received SIGINT signal, shutting down server...')
   httpServer.close(() => {
     console.log('WebSocket server closed')

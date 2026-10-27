@@ -29,20 +29,21 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Plus, Copy, Trash2, TerminalSquare, KeyRound, Boxes } from 'lucide-react'
-import type { NodeDto } from './types'
+import type { ModuleDto, NodeDto } from './types'
 
 export function NodesTab({ onGoConsole }: { onGoConsole: (code: string, token: string) => void }) {
   const { data, refresh } = useNh()
   const { toast } = useToast()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
-  const [created, setCreated] = useState<NodeDto | null>(null)
+  // A freshly created node ALWAYS returns its one-time token.
+  const [created, setCreated] = useState<(NodeDto & { token: string }) | null>(null)
 
   const create = async () => {
     if (!name.trim()) return
     setBusy(true)
     try {
-      const res = await nhPost<{ ok: boolean; node: NodeDto }>('nodes', { name: name.trim() })
+      const res = await nhPost<{ ok: boolean; node: NodeDto & { token: string } }>('nodes', { name: name.trim() })
       setCreated(res.node)
       setName('')
       await refresh()
@@ -182,7 +183,7 @@ function NodeCard({
   onGoConsole,
 }: {
   node: NodeDto
-  modules: { id: string; name: string }[]
+  modules: ModuleDto[]
   onToggle: (n: NodeDto, moduleId: string, enabled: boolean) => void
   onDelete: (n: NodeDto) => void
   onCopyToken: (t: string) => void
