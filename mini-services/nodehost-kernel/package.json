@@ -1,0 +1,14 @@
+{
+  "name": "nodehost-kernel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NodeHost kernel — NHP router, module runtime, admin sessions, federation loops",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.11.1",
+    "socket.io": "^4.8.4"
+  }
+}

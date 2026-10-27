@@ -1,0 +1,139 @@
+// ============================================================
+// NodeHost — Federation-ready schema
+// Each NodeHost instance owns ONE SQLite database file.
+// Two instances (alfa/beta) in this sandbox use two separate
+// files to demonstrate true network federation.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// A NodeHost on the network. The row with kind="local" is THIS host;
+/// every other row is a remote peer learned via NHP hello / manual add.
+model Host {
+  id        String   @id @default(cuid())
+  code      String   @unique // routing key used in NHP addresses (e.g. "alfa")
+  name      String // display name (e.g. "نودهاست آلفا")
+  address   String   @unique // kernel ingress URL (e.g. http://127.0.0.1:3004/ingress)
+  gwPort    Int? // browser socket port (sandbox gateway XTransformPort)
+  kind      String   @default("remote") // local | remote
+  status    String   @default("unknown") // online | unreachable | unknown
+  lastSeen  DateTime?
+  createdAt DateTime @default(now())
+  nodes     Node[]
+}
+
+/// An isolated logical node owned by exactly one admin.
+/// Nodes NEVER go offline by design; only their admin may disconnect.
+model Node {
+  id           String            @id @default(cuid())
+  code         String            @unique // routing key used in NHP addresses (e.g. "node-a1")
+  name         String
+  token        String            @unique // secret admin token
+  isDemo       Boolean           @default(false) // demo nodes expose their token in the roster for testing
+  status       String            @default("active") // active | suspended
+  hostId       String
+  host         Host              @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  createdAt    DateTime          @default(now())
+  moduleStates NodeModuleState[]
+  storages     ModuleStorage[]
+}
+
+/// Module registry (available modules on this NodeHost).
+model ModuleDef {
+  id          String            @id // "chat", "broadcast", "presence", "ping", ...
+  name        String
+  version     String
+  description String
+  author      String            @default("core")
+  builtin     Boolean           @default(true)
+  states      NodeModuleState[]
+}
+
+/// Per-node module switch + config (each node enables/disables freely).
+model NodeModuleState {
+  id        String    @id @default(cuid())
+  nodeId    String
+  moduleId  String
+  enabled   Boolean   @default(false)
+  config    String    @default("{}")
+  node      Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  module    ModuleDef @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  updatedAt DateTime  @updatedAt
+
+  @@unique([nodeId, moduleId])
+}
+
+/// Isolated key/value storage scoped to (node, module) — module sandbox.
+model ModuleStorage {
+  id        String   @id @default(cuid())
+  nodeId    String
+  moduleId  String
+  key       String
+  value     String   @default("{}")
+  updatedAt DateTime @updatedAt
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, moduleId, key])
+}
+
+/// NHP envelope store — doubles as the offline mailbox (status=queued)
+/// and the observability log. No FK: remote addresses are external.
+model NhpMessage {
+  id          String    @id @default(cuid())
+  envId       String // NHP envelope id
+  channel     String // local | remote
+  direction   String // in | out
+  module      String
+  type        String
+  fromHost    String
+  fromNode    String
+  toHost      String
+  toNode      String
+  payload     String    @default("{}")
+  envelope    String    @default("{}") // full NHP envelope JSON (for queued replay)
+  status      String    @default("delivered") // delivered | queued | forwarded | dead
+  attempts    Int       @default(0)
+  error       String?
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+
+  @@index([toNode, status])
+  @@index([fromNode])
+  @@index([status, createdAt])
+  @@index([module])
+}
+
+/// Network directory — rosters of REMOTE hosts learned via presence/hello.
+model NetDirectory {
+  id          String    @id @default(cuid())
+  hostCode    String
+  nodeCode    String
+  nodeName    String
+  modules     String    @default("[]") // JSON array of enabled module ids
+  adminOnline Boolean   @default(false)
+  isDemo      Boolean   @default(false)
+  demoToken   String?
+  lastSeen    DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([hostCode, nodeCode])
+}
+
+/// Kernel activity log (feeds the live dashboard).
+model SysLog {
+  id        String   @id @default(cuid())
+  level     String   @default("info") // info | warn | error
+  scope     String // kernel | router | host | module:<id> | seed
+  message   String
+  data      String   @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
