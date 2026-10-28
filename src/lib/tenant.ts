@@ -33,7 +33,6 @@ export interface RawBootstrap {
 export interface ViewerInfo {
   id: string
   name: string
-  email: string
   role: 'user' | 'admin'
 }
 
@@ -106,7 +105,7 @@ export async function sanitizeBootstrap(
     // Kernel logs expose cross-tenant activity — admins only.
     logs: isAdmin ? raw.logs : [],
     viewer: viewer
-      ? ({ id: viewer.id, name: viewer.name, email: viewer.email, role: viewer.role } as ViewerInfo)
+      ? ({ id: viewer.id, name: viewer.name, role: viewer.role } as ViewerInfo)
       : null,
     quota,
     firstUserPending,

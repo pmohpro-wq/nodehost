@@ -2,44 +2,20 @@
  * auth.ts — web-layer identity for NodeHost.
  *
  * Design: the kernel stays user-agnostic; ALL tenancy lives here.
- *  - Passwords: scrypt (node:crypto) — no external dependency.
+ *  - Passwordless era: the username IS the identity (id = name) and the
+ *    only credential is the session cookie. This is a deliberate product
+ *    decision for frictionless testing — re-login = type the same name.
  *  - Sessions: the cookie carries a random 32-byte token; the DB stores
  *    only its sha256, so a database leak never yields usable cookies.
  *  - Bootstrap rule for self-hosted instances: the FIRST user to register
  *    becomes the admin when no admin exists yet.
  */
-import { randomBytes, scrypt as _scrypt, timingSafeEqual, createHash } from 'node:crypto'
-import { promisify } from 'node:util'
+import { randomBytes, createHash } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { db } from '@/lib/db'
 
-const scrypt = promisify(_scrypt) as (
-  password: string | Buffer,
-  salt: string | Buffer,
-  keylen: number,
-) => Promise<Buffer>
-
 export const SESSION_COOKIE = 'nh_session'
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
-const KEY_LEN = 64
-
-// ------------------------------------------------------------
-// Passwords
-// ------------------------------------------------------------
-
-export async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16)
-  const hash = await scrypt(password, salt, KEY_LEN)
-  return `${salt.toString('hex')}:${hash.toString('hex')}`
-}
-
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [saltHex, hashHex] = stored.split(':')
-  if (!saltHex || !hashHex) return false
-  const hash = await scrypt(password, Buffer.from(saltHex, 'hex'), KEY_LEN)
-  const expected = Buffer.from(hashHex, 'hex')
-  return hash.length === expected.length && timingSafeEqual(hash, expected)
-}
 
 // ------------------------------------------------------------
 // Sessions
@@ -49,7 +25,6 @@ const sha256 = (v: string) => createHash('sha256').update(v).digest('hex')
 
 export interface SafeUser {
   id: string
-  email: string
   name: string
   role: 'user' | 'admin'
   status: 'active' | 'suspended'
@@ -58,14 +33,12 @@ export interface SafeUser {
 
 const toSafeUser = (u: {
   id: string
-  email: string
   name: string
   role: string
   status: string
   createdAt: Date
 }): SafeUser => ({
   id: u.id,
-  email: u.email,
   name: u.name,
   role: u.role === 'admin' ? 'admin' : 'user',
   status: u.status === 'suspended' ? 'suspended' : 'active',

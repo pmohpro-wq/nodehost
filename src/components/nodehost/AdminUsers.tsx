@@ -77,8 +77,8 @@ export function AdminUsers() {
                   <Badge variant="destructive">معلق</Badge>
                 )}
               </div>
-              <div className="text-[11px] text-muted-foreground ltr-block" dir="ltr">
-                {u.email}
+              <div className="text-[11px] text-muted-foreground">
+                {u.nodeCount} نود · عضویت {new Date(u.createdAt).toLocaleDateString('fa-IR')}
               </div>
             </div>
             <div className="flex items-center gap-2">

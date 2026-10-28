@@ -53,6 +53,6 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 
   return NextResponse.json({
     ok: true,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role, status: user.status },
+    user: { id: user.id, name: user.name, role: user.role, status: user.status },
   })
 }

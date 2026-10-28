@@ -17,7 +17,6 @@ export async function GET() {
     ok: true,
     users: users.map((u) => ({
       id: u.id,
-      email: u.email,
       name: u.name,
       role: u.role,
       status: u.status,

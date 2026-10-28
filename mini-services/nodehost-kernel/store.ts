@@ -6,7 +6,7 @@
 import { PrismaClient } from '@prisma/client'
 import type { ModuleRegistration } from '../../src/core/nodehost/interfaces'
 import type { RosterEntry } from '../../src/core/nodehost/protocol'
-import { LOG_TRIM_KEEP } from './config'
+import { LOG_TRIM_KEEP, ROSTER_MAX } from './config'
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
 
@@ -281,14 +281,24 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
   return self
 }
 
-// ------------------------------------------------------------
-// Roster builder (used by hello + admin sockets + bootstrap)
-// ------------------------------------------------------------
-
+/**
+ * Roster builder (used by hello + admin sockets + bootstrap).
+ *
+ * Scale rule: the network directory is a directory of APPS, not accounts —
+ * only nodes with at least one enabled module are announced to remote
+ * hosts. A host with 100k dormant accounts still gossips a tiny roster,
+ * and nodes that enable an app appear (and expire) automatically.
+ */
 export async function localRoster(adminOnline: Set<string>): Promise<RosterEntry[]> {
   const nodes = await prisma.node.findMany({
-    where: { host: { kind: 'local' } },
+    where: {
+      host: { kind: 'local' },
+      status: 'active',
+      moduleStates: { some: { enabled: true } },
+    },
     include: { moduleStates: { where: { enabled: true } } },
+    orderBy: { code: 'asc' },
+    take: ROSTER_MAX,
   })
   return nodes.map((n) => ({
     code: n.code,

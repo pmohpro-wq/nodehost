@@ -20,7 +20,12 @@
  * ============================================================
  */
 
-/** Current protocol version marker carried by every envelope. */
+/**
+ * Current protocol version marker carried by every envelope.
+ * NHP 1.1: discovery upgrades live INSIDE hello payloads (optional `hosts`
+ * hints) and in the well-known HTTP document — the envelope shape itself is
+ * unchanged, so 1.0 peers keep talking to 1.1 peers without any shim.
+ */
 export const NHP_VERSION = 1 as const
 
 /** Wildcard — matches any host / any node (used for fan-out). */
@@ -106,6 +111,11 @@ export interface HelloPayload {
     address?: string
   }
   nodes: RosterEntry[]
+  /**
+   * NHP 1.1 — OTHER hosts the sender knows (peer exchange). Optional:
+   * v1 senders omit it and receivers must tolerate its absence.
+   */
+  hosts?: HostHint[]
 }
 
 // ------------------------------------------------------------
@@ -159,6 +169,46 @@ export function makeEnvelope<P>(params: {
     payload: params.payload,
     ...(params.replyTo ? { replyTo: params.replyTo } : {}),
   }
+}
+
+// ------------------------------------------------------------
+// Discovery (NHP 1.1) — well-known document + gossip hints
+// ------------------------------------------------------------
+
+/**
+ * The public discovery path every NodeHost serves on its API port.
+ * Given a recipient address (host, node), a kernel that does not know
+ * `host` fetches this document from the host's domain and learns the
+ * ingress URL — the same pattern Matrix (.well-known/matrix/server)
+ * and WebFinger (ActivityPub) proved at internet scale.
+ */
+export const WELL_KNOWN_PATH = '/.well-known/nhp'
+
+/** JSON served at WELL_KNOWN_PATH. Deliberately minimal + cacheable. */
+export interface WellKnownDoc {
+  nhp: number
+  host: {
+    /** Routing code — MUST match the code the caller asked about. */
+    code: string
+    name: string
+    /** Where to POST NHP envelopes (the ingress URL). */
+    ingress: string
+    gwPort?: number | null
+  }
+}
+
+/**
+ * One remote host as LEARNED FROM A PEER (second-hand knowledge, a.k.a.
+ * gossip / peer exchange). Rosters announce my own nodes; host hints
+ * announce other hosts I know — that is what makes discovery transitive:
+ * A↔B and B↔C eventually gives A↔C with zero manual peering.
+ */
+export interface HostHint {
+  code: string
+  name?: string
+  /** The peer's best-known ingress URL (may be stale — resolver verifies). */
+  address?: string
+  gwPort?: number | null
 }
 
 /** True when the address is a wildcard (fan-out target). */

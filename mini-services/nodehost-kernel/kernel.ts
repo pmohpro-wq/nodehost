@@ -13,6 +13,7 @@
  */
 import type { Server as SocketIOServer } from 'socket.io'
 import type { Socket } from 'socket.io'
+import type { Host } from '@prisma/client'
 import {
   NHP_SYS,
   NHP_WILDCARD,
@@ -25,7 +26,12 @@ import {
 } from '../../src/core/nodehost/protocol'
 import type { IDirectoryEntry, ModuleRegistration } from '../../src/core/nodehost/interfaces'
 import { bindAdminSocket as bindAdminSocketHandlers, adminRoom } from './adminSocket'
-import { HEARTBEAT_MS, REQUEST_TIMEOUT_MS, RETRY_SWEEP_MS } from './config'
+import {
+  DIR_SWEEP_MS,
+  HEARTBEAT_MS,
+  REQUEST_TIMEOUT_MS,
+  RETRY_SWEEP_MS,
+} from './config'
 import { Federation } from './federation'
 import { alreadyDelivered, recordInbound, recordOutbound } from './mailbox'
 import { ModuleRuntime } from './runtime'
@@ -90,6 +96,11 @@ export class Kernel {
     await this.heartbeatOnce() // immediate first contact
     this.loops.push(setInterval(() => void this.heartbeatOnce(), HEARTBEAT_MS))
     this.loops.push(setInterval(() => void this.federation.retryQueued(), RETRY_SWEEP_MS))
+    // TTL sweep: learned directory entries must expire or the directory
+    // grows forever. Run once at boot (clears the stale leftovers), then
+    // on a slow cadence — this is NOT in the hot path.
+    void this.expireDirectory()
+    this.loops.push(setInterval(() => void this.expireDirectory(), DIR_SWEEP_MS))
     this.isBooted = true
   }
 
@@ -102,6 +113,14 @@ export class Kernel {
   /** Presence sweep delegate (admin socket + REST trigger points). */
   heartbeatOnce() {
     return this.federation.heartbeatOnce()
+  }
+
+  /** TTL sweep delegate — expire stale roster rows + long-dead hosts. */
+  async expireDirectory() {
+    const purged = await this.federation.expireDirectory()
+    if (purged.nodes || purged.hosts) {
+      await log('info', 'host', `directory TTL sweep: -${purged.nodes} node rows, -${purged.hosts} hosts`)
+    }
   }
 
   // ----------------------------------------------------------
@@ -204,12 +223,21 @@ export class Kernel {
     return delivered ? 'delivered' : 'queued'
   }
 
-  /** Forward an envelope to a remote host over HTTP. Queues on failure. */
+  /**
+   * Forward an envelope to a remote host over HTTP. Queues on failure.
+   * NHP 1.1: an unknown host is not a dead end — if the code is
+   * domain-shaped we resolve it via /.well-known/nhp first (lazy first
+   * contact), so recipients like (chat.example.com, node) are routable
+   * without any manual peering.
+   */
   private async forwardRemote(
     env: NhpEnvelope,
     existingRowId?: string,
   ): Promise<RouteOutcome> {
-    const host = await prisma.host.findUnique({ where: { code: env.to.host } })
+    let host: Host | null = await prisma.host.findUnique({ where: { code: env.to.host } })
+    if (!host || host.address.startsWith('unknown://')) {
+      host = (await this.federation.resolveHost(env.to.host)) ?? host
+    }
     if (!host) {
       await log('warn', 'router', `unknown host "${env.to.host}" — cannot route`, { env: env.id })
       return 'rejected'

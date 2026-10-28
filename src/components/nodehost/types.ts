@@ -40,7 +40,6 @@ export interface NodeDto {
 export interface ViewerInfo {
   id: string
   name: string
-  email: string
   role: 'user' | 'admin'
 }
 
@@ -133,7 +132,6 @@ export interface BootstrapDto {
 /** Admin directory of web users (GET /api/admin/users). */
 export interface AdminUserDto {
   id: string
-  email: string
   name: string
   role: 'user' | 'admin'
   status: 'active' | 'suspended'

@@ -16,7 +16,6 @@ import { useMemo, useState } from 'react'
 import { Server, RefreshCw, Power, MessageCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
@@ -37,13 +36,13 @@ export function MyNode() {
     [data, me],
   )
 
-  const [nodeName, setNodeName] = useState('')
   const [creating, setCreating] = useState(false)
 
   const createMyNode = async () => {
     setCreating(true)
     try {
-      await nhPost('nodes', { name: nodeName.trim() || `نود ${me?.name ?? ''}` })
+      // id = name: the proxy stamps the node's code from the username.
+      await nhPost('nodes', {})
       toast({ title: 'نود شما ساخته شد' })
       await refresh()
     } catch (err) {
@@ -78,21 +77,13 @@ export function MyNode() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground leading-6">
-              نود شما سرور اشتراکیِ شخصی خودتان است. یک نام برایش انتخاب کنید — با ثبت‌نام معمولاً
-              خودکار ساخته می‌شود؛ اگر به هر دلیلی ساخته نشده، همین‌جا یک‌کلیکی بسازید.
+              نود شما سرور اشتراکیِ شخصی خودتان است و با ثبت‌نام معمولاً خودکار ساخته می‌شود؛
+              اگر به هر دلیلی ساخته نشده بود (مثلاً قطعی موقت سرور)، همین‌جا یک‌کلیکی بسازید.
+              کد نود شما همان نام کاربری‌تان است — آیدی و آدرس شبکه‌ای یکی می‌مانند.
             </p>
-            <div className="flex gap-2">
-              <Input
-                dir="auto"
-                placeholder={`نود ${me?.name ?? ''}`}
-                value={nodeName}
-                onChange={(e) => setNodeName(e.target.value)}
-                className="max-w-xs"
-              />
-              <Button onClick={() => void createMyNode()} disabled={creating}>
-                {creating ? 'در حال ساخت…' : 'ساخت نود من'}
-              </Button>
-            </div>
+            <Button onClick={() => void createMyNode()} disabled={creating}>
+              {creating ? 'در حال ساخت…' : 'ساخت نود من'}
+            </Button>
           </CardContent>
         </Card>
       )}

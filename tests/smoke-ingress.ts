@@ -6,12 +6,16 @@
  *
  *   1. /ingress auth: 401 without header, 401 with wrong secret
  *   2. /ingress validation: 400 bad JSON, 422 bad envelope (authorized)
- *   3. valid sys.hello → 200 + peer-facing roster in response
- *   4. admin socket: login → send chat → correlated sys.ack round-trip
- *      (exercises route() + deliverLocal + reply correlation)
- *   5. store-and-forward: chat to the unreachable "gama" host → queued
- *   6. module app API: chat app onApi — send via /apps/chat/send,
- *      conversations show the unread thread on the target node
+ *   3. valid sys.hello → 200 + peer-facing roster in response;
+ *      roster is SCOPED (only nodes with enabled apps) + gossip hints
+ *      (hello.hosts) are imported as new remote host rows
+ *   4. /.well-known/nhp discovery document: public, correct ingress
+ *   5. admin socket: login → send chat → correlated sys.ack round-trip
+ *   6. store-and-forward: chat to the unreachable "gama" host → queued
+ *   7. module app API: chat app onApi — send, conversations, unread;
+ *      unknown NON-resolvable host → 422
+ *   8. identity (id = name): createNode with code="سارا" → code sticks;
+ *      duplicate code → 409
  *
  * Run:  bun tests/smoke-ingress.ts
  */
@@ -119,6 +123,8 @@ const helloEnv = {
   payload: {
     host: { code: 'tester', name: 'Test Host', address: 'http://127.0.0.1:5999/ingress' },
     nodes: [{ code: 'node-t1', name: 'Test Node', modules: ['chat'], adminOnline: false }],
+    // NHP 1.1 gossip: second-hand knowledge of OTHER hosts.
+    hosts: [{ code: 'ghost-host', name: 'Ghost Host', address: 'https://ghost.example.com/ingress' }],
   },
 }
 
@@ -139,20 +145,44 @@ if (res.status !== 422) fail(`bad envelope → expected 422, got ${res.status}`)
 console.log('✓ ingress rejects invalid envelope (422)')
 
 // ------------------------------------------------------------
-// 3) Authorized hello → 200 + roster
+// 3) Authorized hello → 200 + scoped roster + gossip import
 // ------------------------------------------------------------
 res = await post('/ingress', helloEnv, `Bearer ${SECRET}`)
 const helloBody = (await res.json()) as {
   ok: boolean
-  hello?: { host?: { code?: string }; nodes?: unknown[] }
+  hello?: { host?: { code?: string }; nodes?: { code: string }[] }
 }
 if (res.status !== 200 || !helloBody.ok) fail(`authorized hello → HTTP ${res.status}`)
 if (helloBody.hello?.host?.code !== 'alfa') fail('hello response missing host code "alfa"')
 if (!Array.isArray(helloBody.hello?.nodes)) fail('hello response missing roster nodes')
-console.log(`✓ authorized hello ok — peer roster has ${helloBody.hello?.nodes?.length} node(s)`)
+const rosterCodes = (helloBody.hello?.nodes ?? []).map((n) => n.code)
+if (!rosterCodes.includes('node-a1') || !rosterCodes.includes('node-a2'))
+  fail(`scoped roster missing chat nodes: ${JSON.stringify(rosterCodes)}`)
+if (rosterCodes.includes('node-a3'))
+  fail('roster must be scoped to nodes with ENABLED apps — node-a3 leaked')
+console.log(`✓ authorized hello ok — scoped roster: ${rosterCodes.join(', ')}`)
+
+// gossip hints from the hello payload must be imported as host rows
+res = await fetch(`${API}/internal/bootstrap`)
+const bootBody = (await res.json()) as { hosts?: { code: string; address: string }[] }
+const ghost = bootBody.hosts?.find((h) => h.code === 'ghost-host')
+if (!ghost || ghost.address !== 'https://ghost.example.com/ingress')
+  fail(`gossip hint not imported: ${JSON.stringify(bootBody.hosts?.map((h) => h.code))}`)
+console.log('✓ gossip hint imported (ghost-host learned from tester)')
 
 // ------------------------------------------------------------
-// 4) Admin socket: two admins → chat + correlated ack round-trip
+// 4) /.well-known/nhp — public discovery document
+// ------------------------------------------------------------
+res = await fetch(`${API}/.well-known/nhp`)
+const wk = (await res.json()) as { ok: boolean; nhp?: number; host?: { code?: string; ingress?: string } }
+if (res.status !== 200 || !wk.ok || wk.host?.code !== 'alfa')
+  fail(`well-known → HTTP ${res.status} ${JSON.stringify(wk)}`)
+if (wk.host?.ingress !== 'http://127.0.0.1:3013/ingress')
+  fail(`well-known ingress wrong: ${wk.host?.ingress}`)
+console.log(`✓ /.well-known/nhp serves ingress ${wk.host?.ingress}`)
+
+// ------------------------------------------------------------
+// 5) Admin socket: two admins → chat + correlated ack round-trip
 //    (delivered = pushed to the target's admin socket; the ack comes
 //    back to the sender's socket via reply correlation)
 // ------------------------------------------------------------
@@ -218,7 +248,7 @@ if (!ack.replyTo) fail('ack envelope missing replyTo correlation')
 console.log(`✓ correlated sys.ack received (replyTo ${ack.replyTo?.slice(0, 8)})`)
 
 // ------------------------------------------------------------
-// 5) Store-and-forward: unreachable host → queued
+// 6) Store-and-forward: unreachable host → queued
 // ------------------------------------------------------------
 const queueResult = await new Promise<{ ok: boolean; outcome: string }>((resolve) => {
   socket.emit(
@@ -237,7 +267,7 @@ if (queueResult.outcome !== 'queued')
 console.log('✓ unreachable host → envelope queued (store-and-forward)')
 
 // ------------------------------------------------------------
-// 6) Module app API — the chat app's onApi (state + send)
+// 7) Module app API — the chat app's onApi (state + send)
 // ------------------------------------------------------------
 const appSend = await post('/internal/nodes/node-a1/apps/chat/send', {
   to: { host: 'alfa', node: 'node-a2' },
@@ -268,6 +298,33 @@ const appSelf = await post('/internal/nodes/node-a1/apps/chat/send', {
 })
 if (appSelf.status !== 422) fail(`self-send → expected 422, got ${appSelf.status}`)
 console.log('✓ chat app API: self-send rejected (422)')
+
+// unknown host WITHOUT a resolvable (domain) shape → 422, no DNS probe
+const appGhost2 = await post('/internal/nodes/node-a1/apps/chat/send', {
+  to: { host: 'nodot', node: 'x' },
+  text: 'unresolvable',
+})
+if (appGhost2.status !== 422) fail(`unresolvable host → expected 422, got ${appGhost2.status}`)
+console.log('✓ chat app API: unknown bare host rejected (422)')
+
+// ------------------------------------------------------------
+// 8) Identity (id = name): node code IS the username
+// ------------------------------------------------------------
+const sara = await post('/internal/nodes', { code: 'سارا', name: 'سارا' })
+const saraBody = (await sara.json()) as { ok: boolean; node?: { code?: string } }
+if (sara.status !== 200 || !saraBody.ok || saraBody.node?.code !== 'سارا')
+  fail(`createNode code=name → HTTP ${sara.status} ${JSON.stringify(saraBody)}`)
+console.log('✓ createNode keeps the username as node code (سارا)')
+
+const dup = await post('/internal/nodes', { code: 'سارا', name: 'سارا دومی' })
+if (dup.status !== 409) fail(`duplicate code → expected 409, got ${dup.status}`)
+console.log('✓ duplicate username rejected (409)')
+
+const gen = await post('/internal/nodes', { name: 'بدون کد' })
+const genBody = (await gen.json()) as { ok: boolean; node?: { code?: string } }
+if (gen.status !== 200 || !genBody.node?.code?.startsWith('node-'))
+  fail(`generated code fallback → ${JSON.stringify(genBody)}`)
+console.log(`✓ generated-code fallback still works (${genBody.node?.code})`)
 
 socket.disconnect()
 socket2.disconnect()

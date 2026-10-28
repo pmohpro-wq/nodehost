@@ -46,3 +46,31 @@ export const CHAT_HISTORY = 200
 
 /** SysLog rows kept after boot-time trim (older rows are deleted). */
 export const LOG_TRIM_KEEP = 400
+
+// ------------------------------------------------------------
+// Discovery & scale (NHP 1.1) — the knobs that keep federation
+// bounded when the network grows from a handful of hosts to
+// thousands. Every heartbeat payload is capped, every learned
+// entry expires, and first contact resolves via well-known.
+// ------------------------------------------------------------
+
+/** Max remote-host hints carried in ONE hello (gossip fan-out bound). */
+export const GOSSIP_HOSTS_MAX = 200
+
+/** Max roster entries carried in ONE hello (nodes offering apps). */
+export const ROSTER_MAX = 500
+
+/** Roster entries (netDirectory rows) unseen for this long are dropped. */
+export const DIR_TTL_MS = 24 * 60 * 60 * 1000 // 24h
+
+/** Remote hosts unreachable for this long are dropped + their roster rows. */
+export const HOST_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+
+/** How often the TTL sweep runs (and at boot, once, immediately). */
+export const DIR_SWEEP_MS = 30 * 60 * 1000 // 30 min
+
+/** Timeout of one well-known resolution fetch. */
+export const RESOLVE_TIMEOUT_MS = 4_000
+
+/** After a failed resolution, do not re-probe the same host for this long. */
+export const RESOLVE_COOLDOWN_MS = 60_000

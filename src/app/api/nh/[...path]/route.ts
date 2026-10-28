@@ -107,18 +107,18 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   if (!viewer) return unauthorized()
 
   // POST nodes → ONE node per user (their personal server), then kernel create.
+  // Identity era (id = name): the node's routing code IS the username, so
+  // the network address of the user is (host.code, viewer.name).
   if (method === 'POST' && joined === 'nodes') {
     const mine = await db.node.count({ where: { ownerId: viewer.id, isDemo: false } })
     if (mine >= 1)
       return forbidden('هر کاربر فقط یک نود دارد — نود شخصی شما از قبل ساخته شده است')
-    let body: Record<string, unknown> = {}
-    try {
-      body = (await req.json()) as Record<string, unknown>
-    } catch {
-      /* kernel validates the name anyway */
-    }
-    body.ownerId = viewer.id // opaque to the kernel — stored as-is
-    return passthrough(req, 'nodes', '', JSON.stringify(body))
+    return passthrough(
+      req,
+      'nodes',
+      '',
+      JSON.stringify({ code: viewer.name, name: viewer.name, ownerId: viewer.id }),
+    )
   }
 
   // POST nodes/<id>/modules → owner or admin.

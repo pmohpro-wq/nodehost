@@ -7,7 +7,7 @@
  * to stay readable, explicit enough to stay auditable.
  */
 import type { Kernel } from './kernel'
-import { isValidEnvelope, makeEnvelope, NHP_SYS } from '../../src/core/nodehost/protocol'
+import { isValidEnvelope, makeEnvelope, NHP_SYS, WELL_KNOWN_PATH } from '../../src/core/nodehost/protocol'
 import { verifyIngressAuth } from './federation'
 import { listMailbox, markRowDelivered } from './mailbox'
 import { log, newAdminToken, newNodeCode, prisma } from './store'
@@ -124,9 +124,13 @@ async function sendFromNode(req: Request, kernel: Kernel, ref: string): Promise<
       const target = await prisma.node.findUnique({ where: { code: tn } })
       if (!target) return json({ ok: false, error: `unknown local node "${tn}"` }, 422)
     } else {
-      // Federated destination — the host must be a known peer.
-      const host = await prisma.host.findUnique({ where: { code: th } })
-      if (!host) return json({ ok: false, error: `unknown host "${th}"` }, 422)
+      // Federated destination — the host must be known OR resolvable
+      // (NHP 1.1 lazily adopts domain-shaped peers via well-known).
+      const known = await prisma.host.findUnique({ where: { code: th } })
+      if (!known) {
+        const resolved = await kernel.federation.resolveHost(th)
+        if (!resolved) return json({ ok: false, error: `میزبان "${th}" شناخته نمی‌شود و قابل کشف هم نیست` }, 422)
+      }
     }
     to = { host: th, node: tn }
   }
@@ -181,15 +185,28 @@ async function moduleAppApi(
   return json(reply.json, reply.status ?? 200)
 }
 
+/**
+ * POST /internal/nodes — create a node.
+ * Identity era (id = name): the web layer passes the user's username as
+ * `code`, so ONE string is the user id, the node id and the network
+ * address. `code` is optional for callers that just want a generated one.
+ */
 async function createNode(req: Request, kernel: Kernel): Promise<Response> {
-  const body = await readBody<{ name?: string; ownerId?: string }>(req)
-  const name = String(body.name ?? '').trim()
+  const body = await readBody<{ code?: string; name?: string; ownerId?: string }>(req)
+  const code = String(body.code ?? '').trim()
+  const name = String(body.name ?? '').trim() || code
   if (!name) return json({ ok: false, error: 'نام نود الزامی است' }, 422)
+  if (code && (code.length < 2 || code.length > 40))
+    return json({ ok: false, error: 'کد نود باید بین ۲ تا ۴۰ نویسه باشد' }, 422)
   const host = await prisma.host.findFirst({ where: { kind: 'local' } })
   if (!host) return json({ ok: false, error: 'host row missing' }, 500)
+  if (code) {
+    const taken = await prisma.node.findUnique({ where: { code } })
+    if (taken) return json({ ok: false, error: 'این نام قبلاً در این نودهاست گرفته شده است' }, 409)
+  }
   const node = await prisma.node.create({
     data: {
-      code: newNodeCode(),
+      code: code || newNodeCode(),
       name: name.slice(0, 60),
       token: newAdminToken(),
       hostId: host.id,
@@ -268,10 +285,33 @@ async function deleteHost(hostId: string): Promise<Response> {
   return json({ ok: true })
 }
 
+/**
+ * GET /.well-known/nhp — the public discovery document (NHP 1.1).
+ * Any kernel that receives mail for (thisHost, node) and does not know
+ * this host yet fetches THIS to learn the ingress URL. No auth: the same
+ * information is already in every hello response we send.
+ */
+function wellKnown(kernel: Kernel): Response {
+  return json({
+    ok: true,
+    nhp: 1,
+    host: {
+      code: kernel.self.code,
+      name: kernel.self.name,
+      ingress: kernel.self.address,
+      gwPort: kernel.self.gwPort,
+    },
+  })
+}
+
 /** Route table for /internal/* and /ingress. */
 export async function handleApi(req: Request, kernel: Kernel): Promise<Response> {
   const url = new URL(req.url)
   const path = url.pathname.replace(/\/+$/, '') || '/'
+
+  if (path === WELL_KNOWN_PATH && req.method === 'GET') {
+    return wellKnown(kernel)
+  }
 
   if (path === '/ingress' && req.method === 'POST') {
     return handleIngress(req, kernel)

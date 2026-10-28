@@ -52,13 +52,15 @@ model Node {
 }
 
 /// A registered web user of THIS NodeHost instance.
+/// Passwordless era: the username IS the identity (id = name) — the session
+/// cookie is the only credential. The username is ALSO the personal node's
+/// routing code, so one string names the user, their node and their
+/// network address at once.
 /// The first user to register becomes the admin (role="admin") when no
 /// admin exists yet — self-hosted bootstrap without seeded credentials.
 model User {
   id           String    @id @default(cuid())
-  email        String    @unique
-  name         String
-  passwordHash String // scrypt: "<salt hex>:<hash hex>"
+  name         String    @unique // username = id = node code (e.g. "سارا")
   role         String    @default("user") // user | admin
   status       String    @default("active") // active | suspended
   createdAt    DateTime  @default(now())
