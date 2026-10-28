@@ -25,6 +25,16 @@ export function nhDelete<T>(path: string): Promise<T> {
   )
 }
 
+/** Auth/admin endpoints (Next.js layer, NOT the kernel proxy). */
+export async function nhJson<T>(path: string, method: string, body?: unknown): Promise<T> {
+  return fetch(path, {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: 'no-store',
+  }).then((r) => handle<T>(r))
+}
+
 /** Relative time in Persian. */
 export function ago(iso: string | null | undefined): string {
   if (!iso) return '—'

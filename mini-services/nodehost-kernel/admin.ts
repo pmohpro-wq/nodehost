@@ -97,7 +97,7 @@ async function handleBootstrap(kernel: Kernel): Promise<Response> {
 }
 
 async function createNode(req: Request, kernel: Kernel): Promise<Response> {
-  const body = await readBody<{ name?: string }>(req)
+  const body = await readBody<{ name?: string; ownerId?: string }>(req)
   const name = String(body.name ?? '').trim()
   if (!name) return json({ ok: false, error: 'نام نود الزامی است' }, 422)
   const host = await prisma.host.findFirst({ where: { kind: 'local' } })
@@ -108,6 +108,9 @@ async function createNode(req: Request, kernel: Kernel): Promise<Response> {
       name: name.slice(0, 60),
       token: newAdminToken(),
       hostId: host.id,
+      // Opaque creator id stamped by the web layer (tenant gate).
+      // The kernel itself never interprets it.
+      ownerId: body.ownerId ? String(body.ownerId) : null,
       moduleStates: {
         create: (await prisma.moduleDef.findMany()).map((m) => ({ moduleId: m.id })),
       },

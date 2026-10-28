@@ -47,8 +47,25 @@ export interface NodeDto {
   isDemo: boolean
   status: 'active' | 'suspended'
   hostId: string
+  /** Creator stamped by the web layer (null on demo/legacy nodes). */
+  ownerId?: string | null
+  ownerName?: string | null
   createdAt: string
   moduleStates: ModuleStateDto[]
+}
+
+/** The signed-in web user, as reported by the proxy on every poll. */
+export interface ViewerInfo {
+  id: string
+  name: string
+  email: string
+  role: 'user' | 'admin'
+}
+
+/** Per-host node quota enforced by the proxy (admin-configurable). */
+export interface QuotaInfo {
+  maxNodes: number
+  used: number
 }
 
 export interface ModuleDto {
@@ -125,6 +142,21 @@ export interface BootstrapDto {
   directory: DirectoryEntry[]
   stats: StatsDto
   logs: LogDto[]
+  viewer: ViewerInfo | null
+  quota: QuotaInfo
+  /** True while the instance has no admin yet — first registrant wins. */
+  firstUserPending: boolean
+}
+
+/** Admin directory of web users (GET /api/admin/users). */
+export interface AdminUserDto {
+  id: string
+  email: string
+  name: string
+  role: 'user' | 'admin'
+  status: 'active' | 'suspended'
+  createdAt: string
+  nodeCount: number
 }
 
 /** Console session — an admin bound to exactly ONE node. */

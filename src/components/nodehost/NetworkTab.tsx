@@ -24,7 +24,8 @@ import {
 import { STATUS_FA } from './types'
 
 export function NetworkTab() {
-  const { data, refresh } = useNh()
+  const { data, refresh, me } = useNh()
+  const isAdmin = me?.role === 'admin'
   const { toast } = useToast()
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
@@ -88,9 +89,11 @@ export function NetworkTab() {
           sub={`${data?.hosts.length ?? 0} میزبان راه‌دور شناخته‌شده`}
         />
         <div className="flex flex-wrap items-end gap-2 mb-3">
-          <Button variant="outline" size="sm" onClick={recheck}>
-            <RefreshCw className="size-3.5" /> هارت‌بیت فوری
-          </Button>
+          {isAdmin && (
+            <Button variant="outline" size="sm" onClick={recheck}>
+              <RefreshCw className="size-3.5" /> هارت‌بیت فوری
+            </Button>
+          )}
         </div>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
           {data?.host && (
@@ -133,15 +136,17 @@ export function NetworkTab() {
                   <span>آخرین تماس: {ago(h.lastSeen)}</span>
                   <div className="flex items-center gap-1">
                     {h.gwPort && <Badge variant="secondary" className="text-[10px]">ws:{h.gwPort}</Badge>}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-7 text-rose-500"
-                      aria-label={`حذف ${h.name}`}
-                      onClick={() => removeHost(h.id, h.code)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                    {isAdmin && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-7 text-rose-500"
+                        aria-label={`حذف ${h.name}`}
+                        onClick={() => removeHost(h.id, h.code)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -149,32 +154,38 @@ export function NetworkTab() {
           ))}
         </div>
 
-        {/* Add host */}
-        <Card className="mt-3">
-          <CardContent className="p-4 grid gap-3 md:grid-cols-[1fr_2fr_120px_auto] items-end">
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">نام میزبان</label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="مثلاً نودهاست دلتا" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">آدرس ingress میزبان (URL کامل)</label>
-              <Input
-                dir="ltr"
-                className="ltr-block"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="https://server.example.com/ingress"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">پورت ws (اختیاری)</label>
-              <Input dir="ltr" value={gwPort} onChange={(e) => setGwPort(e.target.value.replace(/\D/g, ''))} placeholder="3003" />
-            </div>
-            <Button onClick={addHost} disabled={busy || !name.trim() || !address.trim()}>
-              <Plus className="size-4" /> افزودن
-            </Button>
-          </CardContent>
-        </Card>
+        {/* Add host — federation management is admin-only (enforced server-side too) */}
+        {isAdmin ? (
+          <Card className="mt-3">
+            <CardContent className="p-4 grid gap-3 md:grid-cols-[1fr_2fr_120px_auto] items-end">
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">نام میزبان</label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="مثلاً نودهاست دلتا" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">آدرس ingress میزبان (URL کامل)</label>
+                <Input
+                  dir="ltr"
+                  className="ltr-block"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="https://server.example.com/ingress"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">پورت ws (اختیاری)</label>
+                <Input dir="ltr" value={gwPort} onChange={(e) => setGwPort(e.target.value.replace(/\D/g, ''))} placeholder="3003" />
+              </div>
+              <Button onClick={addHost} disabled={busy || !name.trim() || !address.trim()}>
+                <Plus className="size-4" /> افزودن
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <p className="text-[11px] text-muted-foreground mt-3 rounded-lg border border-dashed px-3 py-2">
+            افزودن/حذف میزبان راه‌دور فقط برای ادمین سیستم فعال است — نمای شما فقط‌خواندنی است.
+          </p>
+        )}
         <p className="text-[11px] text-muted-foreground mt-2 leading-5">
           برای اتصال دو سرور واقعی: روی سرور دوم یک نمونهٔ هسته با HOST_CODE/HOST_ADDRESS متفاوت اجرا
           کنید و آدرس ingress آن را اینجا ثبت کنید. قطعی میزبان فقط پیام‌ها را صف می‌کند — هیچ پیامی

@@ -4,10 +4,21 @@ import { useNh } from './store'
 import { StatusDot } from './bits'
 import { Button } from '@/components/ui/button'
 import { useTheme } from 'next-themes'
-import { Moon, Sun, Network, Monitor, Boxes, TerminalSquare, Globe2, BookOpenText } from 'lucide-react'
+import {
+  Moon,
+  Sun,
+  Network,
+  Monitor,
+  Boxes,
+  TerminalSquare,
+  Globe2,
+  BookOpenText,
+  ShieldCheck,
+  LogOut,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const TABS = [
+const BASE_TABS = [
   { id: 'dashboard', label: 'داشبورد', icon: Monitor },
   { id: 'nodes', label: 'نودها', icon: Boxes },
   { id: 'console', label: 'کنسول ادمین', icon: TerminalSquare },
@@ -16,10 +27,11 @@ const TABS = [
 ]
 
 export function Header() {
-  const { data, tab, setTab, session } = useNh()
+  const { data, me, tab, setTab, session, logout } = useNh()
   const { resolvedTheme, setTheme } = useTheme()
 
   const host = data?.host
+  const tabs = me?.role === 'admin' ? [...BASE_TABS, { id: 'admin', label: 'ادمین سیستم', icon: ShieldCheck }] : BASE_TABS
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
@@ -51,6 +63,34 @@ export function Header() {
 
           <div className="flex-1" />
 
+          {/* Signed-in user chip */}
+          {me && (
+            <div className="hidden sm:flex items-center gap-2 rounded-full border px-3 py-1 text-[11px]">
+              <span className="font-medium">{me.name}</span>
+              {me.role === 'admin' ? (
+                <span className="flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2 py-0.5">
+                  <ShieldCheck className="size-3" /> ادمین
+                </span>
+              ) : (
+                <span className="text-muted-foreground">کاربر</span>
+              )}
+            </div>
+          )}
+
+          {/* Logout */}
+          {me && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="خروج از حساب"
+              title="خروج از حساب"
+              onClick={() => void logout()}
+              className="size-9 text-muted-foreground hover:text-rose-600"
+            >
+              <LogOut className="size-4.5" />
+            </Button>
+          )}
+
           {/* Console session indicator */}
           {session && (
             <div className="hidden lg:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-700 dark:text-emerald-400">
@@ -74,7 +114,7 @@ export function Header() {
 
         {/* Tabs */}
         <nav aria-label="بخش‌ها" className="flex gap-1 overflow-x-auto nh-scroll pb-1.5">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}

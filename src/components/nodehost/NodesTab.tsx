@@ -99,6 +99,7 @@ export function NodesTab({ onGoConsole }: { onGoConsole: (code: string, token: s
         <p className="text-[11px] text-muted-foreground mt-2">
           توکن ادمین فقط یک‌بار پس از ساخت نمایش داده می‌شود — ادمین فقط با همین توکن به نودِ خودش
           وصل می‌شود.
+          {data && ` · سهمیهٔ نود این میزبان: ${data.quota.used} از ${data.quota.maxNodes}`}
         </p>
       </section>
 
@@ -199,6 +200,11 @@ function NodeCard({
               <StatusDot tone="green" pulse />
               <span className="truncate">{node.name}</span>
               {node.isDemo && <Badge variant="secondary" className="text-[10px]">دمو</Badge>}
+              {!node.isDemo && node.ownerName && (
+                <Badge variant="outline" className="text-[10px] font-normal">
+                  مالک: {node.ownerName}
+                </Badge>
+              )}
             </div>
             <div className="text-[11px] text-muted-foreground mt-0.5 ltr-block" dir="ltr">
               {node.code}

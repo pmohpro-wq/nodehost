@@ -31,6 +31,8 @@ model Host {
 
 /// An isolated logical node owned by exactly one admin.
 /// Nodes NEVER go offline by design; only their admin may disconnect.
+/// ownerId = the registered web user who created the node (null for demo
+/// and legacy nodes — those are visible to everyone, tokens stay public).
 model Node {
   id           String            @id @default(cuid())
   code         String            @unique // routing key used in NHP addresses (e.g. "node-a1")
@@ -40,9 +42,48 @@ model Node {
   status       String            @default("active") // active | suspended
   hostId       String
   host         Host              @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  ownerId      String?
+  owner        User?             @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   createdAt    DateTime          @default(now())
   moduleStates NodeModuleState[]
   storages     ModuleStorage[]
+
+  @@index([ownerId])
+}
+
+/// A registered web user of THIS NodeHost instance.
+/// The first user to register becomes the admin (role="admin") when no
+/// admin exists yet — self-hosted bootstrap without seeded credentials.
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String // scrypt: "<salt hex>:<hash hex>"
+  role         String    @default("user") // user | admin
+  status       String    @default("active") // active | suspended
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+  nodes        Node[]
+}
+
+/// Web sessions — the cookie carries the raw token, the DB stores its
+/// sha256 so a database leak never yields usable cookies.
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// Instance-wide settings owned by the admin (key-value, typed at use site).
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 /// Module registry (available modules on this NodeHost).

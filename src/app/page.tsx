@@ -2,29 +2,49 @@
 
 /**
  * NodeHost — federated node architecture control panel.
- * Single-page app: dashboard / nodes / admin console / network / protocol.
+ * Tenant gate first: guests get the auth screen, members get the panel.
+ * Single-page app: dashboard / nodes / admin console / network / protocol / admin.
  */
 import { useEffect } from 'react'
 import { Header } from '@/components/nodehost/Header'
+import { AuthGate } from '@/components/nodehost/AuthGate'
 import { DashboardTab } from '@/components/nodehost/DashboardTab'
 import { NodesTab } from '@/components/nodehost/NodesTab'
 import { ConsoleTab } from '@/components/nodehost/console/ConsoleTab'
 import { NetworkTab } from '@/components/nodehost/NetworkTab'
 import { ProtocolTab } from '@/components/nodehost/ProtocolTab'
+import { AdminTab } from '@/components/nodehost/AdminTab'
 import { UI_POLL_MS, loadSession, openConsoleForLocalNode, useNh } from '@/components/nodehost/store'
+import { Network } from 'lucide-react'
 
 export default function Home() {
-  const { tab, setTab, refresh, setSession } = useNh()
+  const { me, tab, setTab, refresh, loadMe, setSession } = useNh()
 
-  // Restore persisted console session + ONE live poll (bootstrap refresh
-  // also keeps the directory fresh while a console session is active).
+  // Resolve the viewer, restore persisted console session + ONE live poll
+  // (bootstrap refresh also re-evaluates the session on every tick).
   useEffect(() => {
     const s = loadSession()
     if (s) setSession(s)
+    void loadMe()
     void refresh()
     const t = setInterval(() => void refresh(), UI_POLL_MS)
     return () => clearInterval(t)
-  }, [setSession, refresh])
+  }, [setSession, loadMe, refresh])
+
+  // Viewer not resolved yet → tiny splash (avoids flashing the auth gate).
+  if (me === undefined) {
+    return (
+      <div className="min-h-screen grid place-items-center">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <Network className="size-8 animate-pulse" />
+          <span className="text-sm">در حال اتصال به میزبان…</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Guest → auth only.
+  if (!me) return <AuthGate />
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -38,6 +58,7 @@ export default function Home() {
         {tab === 'console' && <ConsoleTab />}
         {tab === 'network' && <NetworkTab />}
         {tab === 'protocol' && <ProtocolTab />}
+        {tab === 'admin' && me.role === 'admin' && <AdminTab />}
       </main>
 
       <footer className="mt-auto border-t">
