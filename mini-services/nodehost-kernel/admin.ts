@@ -97,13 +97,14 @@ async function handleBootstrap(kernel: Kernel): Promise<Response> {
 }
 
 /**
- * POST /internal/nodes/:code/send — trusted-internal test send.
- * The web proxy enforces ownership; the kernel just delivers a LOCAL
- * node→node envelope. This exists so the simplified UI can exercise a
- * node's modules over plain REST — no browser socket needed.
+ * POST /internal/nodes/:ref/send — trusted-internal primitive send.
+ * The web proxy enforces ownership; the kernel just routes the envelope.
+ * `to` is OPTIONAL: { host, node }. When absent the envelope loops back
+ * to the sender node itself (self-test). When present it must resolve
+ * to a local node or a known remote host — that's the real messenger path.
  */
 async function sendFromNode(req: Request, kernel: Kernel, ref: string): Promise<Response> {
-  const body = await readBody<{ module?: string; type?: string; payload?: unknown }>(req)
+  const body = await readBody<{ to?: { host?: string; node?: string }; module?: string; type?: string; payload?: unknown }>(req)
   const node = await prisma.node.findFirst({
     where: { OR: [{ id: ref }, { code: ref }] },
     include: { host: true },
@@ -112,13 +113,72 @@ async function sendFromNode(req: Request, kernel: Kernel, ref: string): Promise<
   const moduleId = String(body.module ?? '').trim()
   const type = String(body.type ?? '').trim()
   if (!moduleId || !type) return json({ ok: false, error: 'module and type are required' }, 422)
-  const addr = { host: node.host.code, node: node.code }
-  const env = makeEnvelope({ from: addr, to: addr, module: moduleId, type, payload: body.payload ?? {} })
+
+  const from = { host: node.host.code, node: node.code }
+  let to = from
+  if (body.to?.host && body.to?.node) {
+    const th = String(body.to.host)
+    const tn = String(body.to.node)
+    if (th === node.host.code) {
+      // Local destination — the node must exist here.
+      const target = await prisma.node.findUnique({ where: { code: tn } })
+      if (!target) return json({ ok: false, error: `unknown local node "${tn}"` }, 422)
+    } else {
+      // Federated destination — the host must be a known peer.
+      const host = await prisma.host.findUnique({ where: { code: th } })
+      if (!host) return json({ ok: false, error: `unknown host "${th}"` }, 422)
+    }
+    to = { host: th, node: tn }
+  }
+
+  const env = makeEnvelope({ from, to, module: moduleId, type, payload: body.payload ?? {} })
   const outcome = await kernel.route(env, 'local')
-  // The loopback send reached the node's mailbox + module regardless of a
-  // live admin socket — reflect that in the node's history.
-  await markRowDelivered(env.id, node.code)
+  // A loopback send reached the node's mailbox + module regardless of a
+  // live admin socket — reflect that in the node's history. Real remote
+  // sends are tracked by recordOutbound inside the router itself.
+  if (to === from) await markRowDelivered(env.id, node.code)
   return json({ ok: true, outcome, envId: env.id })
+}
+
+/**
+ * GET|POST /internal/nodes/:ref/apps/:moduleId[/<path>] — serve a live
+ * module instance's own app API (onApi). The web proxy verified node
+ * ownership; here we only verify the module is actually enabled (live).
+ */
+async function moduleAppApi(
+  req: Request,
+  kernel: Kernel,
+  ref: string,
+  moduleId: string,
+  rest: string,
+): Promise<Response> {
+  const node = await prisma.node.findFirst({
+    where: { OR: [{ id: ref }, { code: ref }] },
+    include: { host: true },
+  })
+  if (!node) return json({ ok: false, error: 'node not found' }, 404)
+
+  const url = new URL(req.url)
+  let body: unknown = {}
+  if (req.method === 'POST') {
+    try {
+      body = await req.json()
+    } catch {
+      body = {}
+    }
+  }
+  const reply = await kernel.runtime.callApi(node.code, moduleId, {
+    method: req.method === 'POST' ? 'POST' : 'GET',
+    path: rest,
+    query: Object.fromEntries(url.searchParams),
+    body,
+  })
+  if (!reply)
+    return json(
+      { ok: false, error: 'ماژول روی این نود فعال نیست' },
+      409,
+    )
+  return json(reply.json, reply.status ?? 200)
 }
 
 async function createNode(req: Request, kernel: Kernel): Promise<Response> {
@@ -147,9 +207,9 @@ async function createNode(req: Request, kernel: Kernel): Promise<Response> {
   return json({ ok: true, node })
 }
 
-async function toggleNodeModule(req: Request, kernel: Kernel, nodeId: string): Promise<Response> {
+async function toggleNodeModule(req: Request, kernel: Kernel, ref: string): Promise<Response> {
   const body = await readBody<{ moduleId?: string; enabled?: boolean }>(req)
-  const node = await prisma.node.findUnique({ where: { id: nodeId } })
+  const node = await prisma.node.findFirst({ where: { OR: [{ id: ref }, { code: ref }] } })
   if (!node) return json({ ok: false, error: 'node not found' }, 404)
   if (!body.moduleId) return json({ ok: false, error: 'moduleId required' }, 422)
   await prisma.nodeModuleState.upsert({
@@ -166,8 +226,8 @@ async function toggleNodeModule(req: Request, kernel: Kernel, nodeId: string): P
   return json({ ok: true })
 }
 
-async function deleteNode(kernel: Kernel, nodeId: string): Promise<Response> {
-  const node = await prisma.node.findUnique({ where: { id: nodeId } })
+async function deleteNode(kernel: Kernel, ref: string): Promise<Response> {
+  const node = await prisma.node.findFirst({ where: { OR: [{ id: ref }, { code: ref }] } })
   if (node) {
     await prisma.node.delete({ where: { id: node.id } })
     await kernel.runtime.syncAll()
@@ -233,6 +293,11 @@ export async function handleApi(req: Request, kernel: Kernel): Promise<Response>
   const nodeSend = path.match(/^\/internal\/nodes\/([^/]+)\/send$/)
   if (nodeSend && req.method === 'POST') {
     return sendFromNode(req, kernel, nodeSend[1])
+  }
+
+  const nodeApp = path.match(/^\/internal\/nodes\/([^/]+)\/apps\/([^/]+)(?:\/(.*))?$/)
+  if (nodeApp && (req.method === 'GET' || req.method === 'POST')) {
+    return moduleAppApi(req, kernel, nodeApp[1], nodeApp[2], nodeApp[3] ?? '')
   }
 
   const nodeDelete = path.match(/^\/internal\/nodes\/([^/]+)$/)

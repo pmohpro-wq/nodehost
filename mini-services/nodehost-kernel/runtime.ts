@@ -12,6 +12,8 @@ import type {
   INodeContext,
   INodeModule,
   INodeIdentity,
+  ModuleApiRequest,
+  ModuleApiResponse,
   ModuleRegistration,
 } from '../../src/core/nodehost/interfaces'
 import type { NhpEnvelope } from '../../src/core/nodehost/protocol'
@@ -114,6 +116,21 @@ export class ModuleRuntime {
 
   isEnabled(nodeCode: string, moduleId: string) {
     return this.live.has(instKey(nodeCode, moduleId))
+  }
+
+  /**
+   * Serve a module's own app API (onApi) from its LIVE instance.
+   * Returns null when the node/module pair has no live instance — the
+   * caller maps that to HTTP 409 ("module disabled on this node").
+   */
+  async callApi(
+    nodeCode: string,
+    moduleId: string,
+    req: ModuleApiRequest,
+  ): Promise<ModuleApiResponse | null> {
+    const inst = this.live.get(instKey(nodeCode, moduleId))
+    if (!inst?.mod.onApi) return null
+    return inst.mod.onApi(req, inst.ctx)
   }
 
   /** Dispatch an envelope to the target node's module instance. */

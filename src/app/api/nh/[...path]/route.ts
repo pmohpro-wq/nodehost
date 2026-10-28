@@ -87,6 +87,17 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     return passthrough(req, joined, search)
   }
 
+  // GET nodes/<ref>/apps/<moduleId>[/<rest>] → module app API (owner/admin).
+  const appGet = joined.match(/^nodes\/([^/]+)\/apps\/([^/]+)(\/.*)?$/)
+  if (method === 'GET' && appGet) {
+    const viewer = await getSessionUser()
+    if (!viewer) return unauthorized()
+    const node = await db.node.findUnique({ where: { id: appGet[1] } })
+    if (!node) return json({ ok: false, error: 'نود یافت نشد' }, 404)
+    if (!canManageNode(viewer, node)) return forbidden('این نود متعلق به شما نیست')
+    return passthrough(req, joined, search)
+  }
+
   // No other anonymous reads: keep the surface explicit instead of open.
   if (method === 'GET') return viewer ? notFound() : unauthorized()
 
@@ -123,6 +134,15 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const send = joined.match(/^nodes\/([^/]+)\/send$/)
   if (method === 'POST' && send) {
     const node = await db.node.findUnique({ where: { id: send[1] } })
+    if (!node) return json({ ok: false, error: 'نود یافت نشد' }, 404)
+    if (!canManageNode(viewer, node)) return forbidden('این نود متعلق به شما نیست')
+    return passthrough(req, joined, search)
+  }
+
+  // POST nodes/<id>/apps/<moduleId>[/<rest>] → module app API (owner/admin).
+  const appPost = joined.match(/^nodes\/([^/]+)\/apps\/([^/]+)(\/.*)?$/)
+  if (method === 'POST' && appPost) {
+    const node = await db.node.findUnique({ where: { id: appPost[1] } })
     if (!node) return json({ ok: false, error: 'نود یافت نشد' }, 404)
     if (!canManageNode(viewer, node)) return forbidden('این نود متعلق به شما نیست')
     return passthrough(req, joined, search)

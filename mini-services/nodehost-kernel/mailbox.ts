@@ -161,7 +161,7 @@ export async function listMailbox(nodeCode: string, status?: string) {
   })
 }
 
-/** Direct node-to-node conversation (chat module). */
+/** Direct node-to-node conversation (chat module) — mailbox read model. */
 export async function chatHistory(nodeCode: string, peerHost: string, peerNode: string) {
   return prisma.nhpMessage.findMany({
     where: {
@@ -174,15 +174,6 @@ export async function chatHistory(nodeCode: string, peerHost: string, peerNode: 
     },
     orderBy: { createdAt: 'asc' },
     take: CHAT_HISTORY,
-  })
-}
-
-/** Broadcast posts received by a node. */
-export async function broadcastHistory(nodeCode: string) {
-  return prisma.nhpMessage.findMany({
-    where: { toNode: nodeCode, module: 'broadcast' },
-    orderBy: { createdAt: 'desc' },
-    take: MAILBOX_LIST,
   })
 }
 

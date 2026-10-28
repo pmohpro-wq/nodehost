@@ -165,10 +165,7 @@ export function makeEnvelope<P>(params: {
 export const isWildcardAddr = (a: NhpAddress) =>
   a.host === NHP_WILDCARD || a.node === NHP_WILDCARD
 
-/** Namespaced message types used by the built-in test modules. */
+/** Namespaced message types used by the built-in modules. */
 export const MODULE_TYPES = {
   chat: { MESSAGE: 'chat.message' },
-  broadcast: { PUBLISH: 'broadcast.publish', POST: 'broadcast.post' },
-  presence: { QUERY: 'presence.query', ROSTER: 'presence.roster' },
-  ping: { REQUEST: 'ping.request', REPLY: 'ping.reply' },
 } as const

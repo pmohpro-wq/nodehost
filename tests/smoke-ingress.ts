@@ -10,6 +10,8 @@
  *   4. admin socket: login → send chat → correlated sys.ack round-trip
  *      (exercises route() + deliverLocal + reply correlation)
  *   5. store-and-forward: chat to the unreachable "gama" host → queued
+ *   6. module app API: chat app onApi — send via /apps/chat/send,
+ *      conversations show the unread thread on the target node
  *
  * Run:  bun tests/smoke-ingress.ts
  */
@@ -116,7 +118,7 @@ const helloEnv = {
   ttl: 4,
   payload: {
     host: { code: 'tester', name: 'Test Host', address: 'http://127.0.0.1:5999/ingress' },
-    nodes: [{ code: 'node-t1', name: 'Test Node', modules: ['ping'], adminOnline: false }],
+    nodes: [{ code: 'node-t1', name: 'Test Node', modules: ['chat'], adminOnline: false }],
   },
 }
 
@@ -233,6 +235,39 @@ const queueResult = await new Promise<{ ok: boolean; outcome: string }>((resolve
 if (queueResult.outcome !== 'queued')
   fail(`unreachable host → expected outcome "queued", got ${JSON.stringify(queueResult)}`)
 console.log('✓ unreachable host → envelope queued (store-and-forward)')
+
+// ------------------------------------------------------------
+// 6) Module app API — the chat app's onApi (state + send)
+// ------------------------------------------------------------
+const appSend = await post('/internal/nodes/node-a1/apps/chat/send', {
+  to: { host: 'alfa', node: 'node-a2' },
+  text: 'سلام از طریق app api',
+})
+const appSendBody = (await appSend.json()) as { ok: boolean; outcome?: string; error?: string }
+if (appSend.status !== 200 || !appSendBody.ok || appSendBody.outcome !== 'delivered')
+  fail(`app api send → HTTP ${appSend.status} ${JSON.stringify(appSendBody)}`)
+console.log('✓ chat app API: send delivered (outcome=delivered)')
+
+const appConvs = await fetch(`${API}/internal/nodes/node-a2/apps/chat/conversations`)
+const appConvsBody = (await appConvs.json()) as {
+  ok: boolean
+  contacts?: { node: string }[]
+  conversations?: { peer: { host: string; node: string }; unread: number }[]
+}
+if (!appConvsBody.ok) fail(`app api conversations → ${JSON.stringify(appConvsBody)}`)
+const thread = appConvsBody.conversations?.find((c) => c.peer.host === 'alfa' && c.peer.node === 'node-a1')
+if (!thread || thread.unread < 1)
+  fail(`app api conversations missing unread thread: ${JSON.stringify(appConvsBody.conversations)}`)
+if (!appConvsBody.contacts?.some((c) => c.node === 'node-a1'))
+  fail('app api contacts should list node-a1 (chat enabled)')
+console.log(`✓ chat app API: conversations show unread=${thread?.unread ?? '?'} + contacts from directory`)
+
+const appSelf = await post('/internal/nodes/node-a1/apps/chat/send', {
+  to: { host: 'alfa', node: 'node-a1' },
+  text: 'self',
+})
+if (appSelf.status !== 422) fail(`self-send → expected 422, got ${appSelf.status}`)
+console.log('✓ chat app API: self-send rejected (422)')
 
 socket.disconnect()
 socket2.disconnect()

@@ -44,7 +44,7 @@
 ├── src/core/nodehost/          ← هستهٔ مشترک؛ مستقل از کتابخانه (dependency-free)
 │   ├── protocol.ts             ← پاکت NHP v1: آدرس‌دهی host/node، ttl، replyTo، wildcard
 │   ├── interfaces.ts           ← قرارداد متن‌باز: INodeModule / INodeContext / defineModule
-│   └── modules/                ← ماژول‌های مرجع (chat، broadcast، presence، ping)
+│   └── modules/                ← اپ‌های نود (پیام‌رسان / chat)
 ├── mini-services/nodehost-kernel/  ← هستهٔ اجرایی هر سرور (bun + socket.io + Prisma)
 │   ├── kernel.ts               ← روتر: تحویل محلی / فوروارد HTTP + مکانیزم request/response همبسته
 │   ├── federation.ts           ← لایهٔ بین‌میزبانی: transport، هارت‌بیت، صف retry با backoff نمایی
@@ -103,25 +103,41 @@ bun dev          # http://localhost:3000
 
 اگر میزبان راه‌دوری در دسترس نباشد، پیام‌ها تا ۶ بار با backoff نمایی retry می‌شوند و سپس به dead-letter می‌روند — این مکانیزم روی ارتباط با میزبان‌های واقعیِ فدراسیون کار می‌کند، نه نمونه‌های جعلی محلی.
 
-## ساخت ماژول جدید | Writing a Module
+## اپ‌های نود (ماژول‌ها) | Node Apps (Modules)
 
-ماژول‌ها قلب توسعه‌پذیری NodeHost هستند. یک ماژول فقط یک شیء است که قرارداد `defineModule` را رعایت می‌کند:
+هر نود اپ‌های خود را دارد که به‌صورت زنده فعال/غیرفعال می‌شوند. اپ ساختیِ هر نود **پیام‌رسان** (`chat`) است:
+
+- **گیرنده از دفترچهٔ شبکه** — همهٔ نودهای همین سرور (نود کاربران دیگر) + نودهای سرورهای فدرالِ متصل؛ فقط نودهایی که چت‌شان روشن است.
+- **گفتگوی دوطرفهٔ واقعی** — تاریخچه و خوانده‌نشده‌ها state خود اپ است (storage ایزولهٔ `per (node, module)`)؛ هر پیام یک پاکت واقعی NHP است که کرنل مسیریابی می‌کند (محلی یا فدرال، با store-and-forward).
+- **آزمایش دو-کاربره** — هر کاربر فقط یک نود دارد؛ برای گفتگو، در مرورگر دوم با «ورود سریع» کاربر دومی بسازید — نودش فوراً در دفترچه ظاهر می‌شود.
+
+## ساخت اپ جدید | Writing a Module
+
+ماژول‌ها قلب توسعه‌پذیری NodeHost هستند — یک ماژول هم پیام‌ها را جواب می‌دهد و هم می‌تواند **API اپ خودش** را برای پنل مالک نود سرو کند (`onApi`). یک ماژول فقط یک شیء است که قرارداد `defineModule` را رعایت می‌کند:
 
 ```ts
 import { defineModule } from "@/core/nodehost/interfaces";
 
 export default defineModule({
-  name: "greeter",
+  id: "greeter",
+  name: "Greeter / سلام‌رسان",
   version: "1.0.0",
+  description: "نمونهٔ اپ",
 
-  async onEnable(ctx) {
-    ctx.log("greeter enabled on this node");
+  // ۱) پیام‌های شبکه‌ای (NHP) برای نودهایی که ماژول را فعال کرده‌اند
+  async onMessage(envelope, ctx) {
+    if (envelope.type === "greet.hello") {
+      return makeEnvelope({ /* پاسخ اختیاری؛ با replyTo همبسته می‌شود */ });
+    }
+    return null;
   },
 
-  async onMessage(ctx, packet) {
-    if (packet.type === "greet.hello") {
-      await ctx.reply({ type: "greet.hi", payload: { hi: "salam!" } });
+  // ۲) API اپ — پنل مالک نود با /api/nh/nodes/:id/apps/greeter/... صدا می‌زند
+  async onApi(req, ctx) {
+    if (req.method === "GET" && req.path === "stats") {
+      return { json: { ok: true, count: (await ctx.storage.get<number>("n")) ?? 0 } };
     }
+    return { status: 404, json: { ok: false, error: "no route" } };
   },
 });
 ```
@@ -133,11 +149,11 @@ export default defineModule({
 registerModule(greeterModule);
 ```
 
-سپس از پنل کنترل، ماژول را برای هر نود به‌صورت زنده فعال/غیرفعال کنید. storage ماژول به‌صورت `per (node, module)` ایزوله است.
+سپس از پنل کنترل، ماژول را برای هر نود به‌صورت زنده فعال/غیرفعال کنید. storage ماژول به‌صورت `per (node, module)` ایزوله است و مسیر اپِ آن `nodes/:id/apps/:moduleId/*` است (مجوز مالکیت در پروکسی وب؛ سرو از نمونهٔ زندهٔ ماژول در کرنل).
 
 ## چندکاربری (Multi-Tenant) | Multi-Tenant Layer
 
-این نمونه یک لایهٔ وب چندکاربره دارد: هر کسی ثبت‌نام می‌کند، نود خودش را می‌سازد، ماژول‌هایش را فعال/غیرفعال می‌کند و روی فدراسیون کار می‌کند — بدون دسترسی به نود دیگران.
+این نمونه یک لایهٔ وب چندکاربره دارد: هر کسی ثبت‌نام می‌کند، **فقط یک نود** (سرور شخصی خودش) می‌گیرد، اپ‌هایش را فعال/غیرفعال می‌کند و در شبکهٔ فدرال استفاده‌شان می‌کند — بدون دسترسی به نود دیگران. نخستین کاربرِ نمونهٔ تازه ادمین می‌شود؛ ادمین هم نود شخصی خودش را دارد و فقط بخش مدیریت کاربران را به‌علاوه می‌بیند.
 
 **قاعدهٔ طلایی معماری:** هویت و مجوز فقط در لایهٔ وب (Next.js) زندگی می‌کند؛ کرنل user-agnostic می‌ماند و `/ingress` و `INodeModule` بدون تغییر برای توسعه‌دهندگان معتبرند.
 

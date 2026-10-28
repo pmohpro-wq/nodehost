@@ -5,25 +5,26 @@
  *
  * The user's node is their personal shared server. This view shows:
  *   1. the node (name, code, status) — created automatically at sign-up
- *   2. the test modules with plain on/off switches
- *   3. a tiny live test: send a chat message to the node and watch the feed
+ *   2. its apps (modules) with plain on/off switches
+ *   3. each ENABLED app mounted right below its switch — the messenger
+ *      opens as a full two-way chat with recipients from the directory
  *
  * No tabs, no federation clutter, no console — everything else lives in
  * the kernel where it belongs.
  */
-import { useEffect, useMemo, useState } from 'react'
-import { Server, RefreshCw, SendHorizontal, Power, MessageSquare } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Server, RefreshCw, Power, MessageCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
-import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/hooks/use-toast'
-import { nhGet, nhPost, ago } from './api'
+import { nhPost, ago } from './api'
 import { useNh } from './store'
 import { StatusDot } from './bits'
-import type { MailRow, NodeDto } from './types'
+import { ChatApp } from './ChatApp'
+import type { NodeDto } from './types'
 
 export function MyNode() {
   const { me, data, refresh } = useNh()
@@ -66,7 +67,7 @@ export function MyNode() {
         <>
           <NodeHeader node={myNode} hostName={data.host.name} />
           <ModuleSwitches node={myNode} modules={data.modules} />
-          <LiveTest node={myNode} />
+          <AppMount node={myNode} />
         </>
       ) : (
         <Card>
@@ -202,140 +203,21 @@ function ModuleSwitches({
 }
 
 // ------------------------------------------------------------------
-// Live test — send a chat message to MY node and watch the feed.
-// Proves the node (and its chat module) actually works.
+// App mount — every ENABLED module opens its own real app below the
+// switches. The messenger (chat) is the built-in app of every node.
 // ------------------------------------------------------------------
-function LiveTest({ node }: { node: NodeDto }) {
-  const { data, refresh } = useNh()
-  const { toast } = useToast()
-  const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
-
+function AppMount({ node }: { node: NodeDto }) {
   const chatOn = node.moduleStates.find((s) => s.moduleId === 'chat')?.enabled ?? false
-
-  // Feed refreshes with the panel's 5s poll — no extra timers.
-  const [rows, setRows] = useState<MailRow[]>([])
-  useEffect(() => {
-    if (!chatOn) return
-    let alive = true
-    nhGet<{ ok: boolean; items: MailRow[] }>(`mailbox/${node.code}?status=delivered`)
-      .then((res) => {
-        if (!alive) return
-        setRows(
-          res.items
-            .filter((r) => r.module === 'chat')
-            .slice(-8)
-            .reverse(),
-        )
-      })
-      .catch(() => {
-        /* temporary — next poll retries */
-      })
-    return () => {
-      alive = false
-    }
-  }, [data, chatOn, node.code])
-
-  const loadFeedNow = async () => {
-    try {
-      const res = await nhGet<{ ok: boolean; items: MailRow[] }>(
-        `mailbox/${node.code}?status=delivered`,
-      )
-      setRows(
-        res.items
-          .filter((r) => r.module === 'chat')
-          .slice(-8)
-          .reverse(),
-      )
-    } catch {
-      /* temporary — next poll retries */
-    }
-  }
-
-  const send = async () => {
-    if (!text.trim()) return
-    setSending(true)
-    try {
-      await nhPost(`nodes/${node.id}/send`, {
-        module: 'chat',
-        type: 'msg.post',
-        payload: { text: text.trim() },
-      })
-      setText('')
-      toast({ title: 'پیام آزمایشی ارسال شد' })
-      await refresh()
-      await loadFeedNow()
-    } catch (err) {
-      toast({ title: 'ارسال ناموفق بود', description: String(err), variant: 'destructive' })
-    } finally {
-      setSending(false)
-    }
-  }
-
+  if (chatOn) return <ChatApp node={node} />
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <MessageSquare className="size-5" /> آزمایش زندهٔ نود
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {chatOn ? (
-          <>
-            <div className="flex gap-2">
-              <Input
-                dir="auto"
-                placeholder="یک پیام برای نود خودتان بنویسید…"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && void send()}
-              />
-              <Button onClick={() => void send()} disabled={sending || !text.trim()}>
-                <SendHorizontal className="size-4" /> ارسال
-              </Button>
-            </div>
-            <Separator />
-            {rows.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-2">
-                هنوز پیامی نیست — یکی بفرستید تا تحویل نودتان را ببینید.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {rows.map((r) => (
-                  <li
-                    key={r.id}
-                    className="rounded-lg border px-3 py-2 flex items-start gap-3 text-sm"
-                  >
-                    <Badge variant={r.direction === 'in' ? 'secondary' : 'outline'} className="shrink-0">
-                      {r.direction === 'in' ? 'دریافتی' : 'ارسالی'}
-                    </Badge>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate">{safeText(r.payload)}</div>
-                      <div className="text-[10px] text-muted-foreground ltr-block" dir="ltr">
-                        {r.fromNode} · {ago(r.createdAt)}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground leading-6">
-            برای آزمایش زنده، اول ماژول <span className="font-medium">چت</span> را از فهرست بالا
-            فعال کنید — پیام شما به نود خودتان ارسال و در همین‌جا نمایش داده می‌شود.
-          </p>
-        )}
+      <CardContent className="py-8 text-center space-y-2">
+        <MessageCircle className="size-7 mx-auto text-muted-foreground/50" />
+        <p className="text-sm text-muted-foreground leading-6">
+          پیام‌رسان خاموش است — کلید آن را روشن کنید تا اپ کامل آن همین‌جا باز شود:
+          گفتگو با هر نود شبکه، دفترچه گیرنده‌ها، تاریخچه و خوانده‌نشده‌ها.
+        </p>
       </CardContent>
     </Card>
   )
-}
-
-function safeText(payloadJson: string): string {
-  try {
-    const p = JSON.parse(payloadJson) as { text?: string }
-    return p.text ?? payloadJson
-  } catch {
-    return payloadJson
-  }
 }

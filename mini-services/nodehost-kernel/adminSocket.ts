@@ -12,7 +12,6 @@ import { makeEnvelope } from '../../src/core/nodehost/protocol'
 import type { Kernel } from './kernel'
 import {
   alreadyDelivered,
-  broadcastHistory,
   chatHistory,
   clearMailbox,
   listMailbox,
@@ -83,11 +82,6 @@ export function bindAdminSocket(kernel: Kernel, socket: Socket) {
       String(p?.peerNode ?? ''),
     )
     cb?.({ ok: true, items })
-  })
-
-  socket.on('broadcast:history', async (_p, cb) => {
-    if (!boundNode) return cb?.({ ok: false, items: [] })
-    cb?.({ ok: true, items: await broadcastHistory(boundNode) })
   })
 
   socket.on('mailbox:list', async (p: { status?: string }, cb) => {

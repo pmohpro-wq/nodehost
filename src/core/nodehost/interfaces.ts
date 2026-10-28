@@ -102,6 +102,30 @@ export interface INodeContext {
 }
 
 /**
+ * A request addressed to a module's OWN app API (onApi).
+ * Served over the control plane as
+ *   /internal/nodes/:nodeRef/apps/:moduleId[/<path>]
+ * after the web proxy verified the caller owns the node.
+ */
+export interface ModuleApiRequest {
+  method: 'GET' | 'POST'
+  /** Sub-path after /apps/<moduleId> ('' for the root call). */
+  path: string
+  /** Query parameters (GET style), already parsed. */
+  query: Record<string, string>
+  /** Parsed JSON body (POST), {} when absent. */
+  body: unknown
+}
+
+/** What a module's app API returns — the kernel wraps it into an HTTP response. */
+export interface ModuleApiResponse {
+  /** HTTP status (default 200). */
+  status?: number
+  /** JSON body sent to the caller (merged with { ok: true } when it has no ok field). */
+  json: unknown
+}
+
+/**
  * THE extension point of the whole architecture.
  *
  * Lifecycle:
@@ -112,6 +136,11 @@ export interface INodeContext {
  *   envelope arrives for node N with module M enabled
  *     -> kernel calls M.onMessage(envelope, ctxOf(N))
  *     -> may return a reply envelope, which the kernel routes back
+ *
+ * App flow (module = app, not just a message sink):
+ *   the node's owner calls /apps/<moduleId>/...
+ *     -> kernel calls M.onApi(req, ctxOf(N))
+ *     -> the module serves its own data/actions from ctx.storage + ctx.send
  */
 export interface INodeModule<P = unknown> {
   /** Unique module id used in envelopes ("chat", "my-custom-thing"). */
@@ -134,6 +163,12 @@ export interface INodeModule<P = unknown> {
    * or null when no reply is needed.
    */
   onMessage(envelope: NhpEnvelope<P>, ctx: INodeContext): Promise<NhpEnvelope | null>
+  /**
+   * Serve the module's own app API (only called while the module is
+   * enabled on the node). Return the JSON the owner's panel should show.
+   * Keep everything inside ctx — storage is the app's private state.
+   */
+  onApi?(req: ModuleApiRequest, ctx: INodeContext): Promise<ModuleApiResponse>
 }
 
 /** Module factory — how kernels instantiate per-node instances. */

@@ -13,20 +13,14 @@
  */
 import { createServer } from 'http'
 import { Server as SocketIOServer } from 'socket.io'
-// Built-in modules — the reference implementations for developers.
+// Built-in modules — the node's apps. One app per concern; the messenger.
 import chatModule from '../../src/core/nodehost/modules/chat'
-import broadcastModule from '../../src/core/nodehost/modules/broadcast'
-import presenceModule from '../../src/core/nodehost/modules/presence'
-import pingModule from '../../src/core/nodehost/modules/ping'
 import { Kernel } from './kernel'
 import { handleApi } from './admin'
 import { ENV, log } from './store'
 
 const kernel = new Kernel()
 kernel.registerModule(chatModule)
-kernel.registerModule(broadcastModule)
-kernel.registerModule(presenceModule)
-kernel.registerModule(pingModule)
 
 // ------------------------------------------------------------
 // Socket.io (admin data-plane) — path "/" per gateway contract

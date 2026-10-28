@@ -154,6 +154,17 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
     })
   }
 
+  // 2.5) Purge modules that are no longer registered (e.g. legacy installs
+  // of older kernels): their registry rows and every node's state switch
+  // would otherwise keep dead modules visible in the panel forever.
+  const liveIds = [...registry.keys()]
+  await prisma.nodeModuleState.deleteMany({
+    where: { moduleId: { notIn: liveIds } },
+  })
+  await prisma.moduleDef.deleteMany({
+    where: { id: { notIn: liveIds } },
+  })
+
   // 3) Federated peers (learned at boot via env; more arrive via hello)
   if (ENV.peer) {
     const [code, name, address, gwPort] = ENV.peer.split('|')
@@ -177,7 +188,7 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
     // Federation is between REAL servers: any remote host row pointing at
     // localhost is a leftover of a local multi-kernel simulation, never a
     // legitimate peer in the one-NodeHost-per-server deployment model.
-    await prisma.host.deleteMany({
+    const staleHosts = await prisma.host.findMany({
       where: {
         kind: 'remote',
         OR: [
@@ -185,6 +196,21 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
           { address: { contains: 'localhost' } },
         ],
       },
+      select: { code: true },
+    })
+    if (staleHosts.length) {
+      await prisma.host.deleteMany({
+        where: { code: { in: staleHosts.map((h) => h.code) } },
+      })
+      await prisma.netDirectory.deleteMany({
+        where: { hostCode: { in: staleHosts.map((h) => h.code) } },
+      })
+    }
+    // Orphan roster entries whose host row is gone entirely — a directory
+    // that lists ghosts would confuse the messenger's recipient picker.
+    const known = await prisma.host.findMany({ select: { code: true } })
+    await prisma.netDirectory.deleteMany({
+      where: { hostCode: { notIn: known.map((h) => h.code) } },
     })
   }
 
@@ -196,14 +222,14 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
       name: 'نود آلفا-۱ (سرور اصلی)',
       token: 'demo-token-a1',
       hostId: self.id,
-      enabled: ['chat', 'broadcast', 'presence', 'ping'],
+      enabled: ['chat'],
     })
     await upsertDemoNode({
       code: 'node-a2',
-      name: 'نود آلفا-۲ (چت و پینگ)',
+      name: 'نود آلفا-۲ (پیام‌رسان)',
       token: 'demo-token-a2',
       hostId: self.id,
-      enabled: ['chat', 'ping'],
+      enabled: ['chat'],
     })
     await upsertDemoNode({
       code: 'node-a3',
@@ -228,10 +254,10 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
   if (ENV.seedProfile === 'beta') {
     await upsertDemoNode({
       code: 'node-b1',
-      name: 'نود بتا-۱ (کامل)',
+      name: 'نود بتا-۱ (پیام‌رسان)',
       token: 'demo-token-b1',
       hostId: self.id,
-      enabled: ['chat', 'broadcast', 'presence', 'ping'],
+      enabled: ['chat'],
     })
     await upsertDemoNode({
       code: 'node-b2',
