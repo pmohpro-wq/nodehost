@@ -23,7 +23,7 @@ bun .next/standalone/server.js > "$LOG_DIR/web.log" 2>&1 &
 
 for i in $(seq 1 30); do
   sleep 1
-  if curl -sf -m 2 http://127.0.0.1:3000/api/auth/me >/dev/null 2>&1; then
+  if curl -sf -m 2 http://127.0.0.1:3000/api/nh/bootstrap >/dev/null 2>&1; then
     echo "web (production) up"
     exit 0
   fi

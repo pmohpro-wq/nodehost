@@ -43,23 +43,28 @@ export function Header() {
 
           <div className="flex-1" />
 
-          {/* Signed-in user chip */}
+          {/* Signed-in user chip — id + full network address (id@host) */}
           {me && (
             <div className="hidden sm:flex items-center gap-2 rounded-full border px-3 py-1 text-[11px]">
               <span className="font-medium">{me.name}</span>
+              {host && (
+                <span className="text-muted-foreground ltr-block" dir="ltr">
+                  {me.name}@{host.code}
+                </span>
+              )}
               <span className="text-muted-foreground">
                 {me.role === 'admin' ? 'ادمین' : 'کاربر'}
               </span>
             </div>
           )}
 
-          {/* Logout */}
+          {/* Logout — forgets THIS tab only (session + ?u= in the bar) */}
           {me && (
             <Button
               variant="ghost"
               size="icon"
               aria-label="خروج از حساب"
-              title="خروج از حساب"
+              title="خروج از حساب (فقط همین تب)"
               onClick={() => void logout()}
               className="size-9 text-muted-foreground hover:text-rose-600"
             >

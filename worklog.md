@@ -244,3 +244,30 @@ Stage Summary:
 - کشف نودها اصولی و مقیاس‌پذیر شد: تفکیک نام با well-known (اولین برخورد بدون ثبت دستی)، گاسپ بین میزبان‌ها (تراگذری + خودترمیم از یک seed)، TTL (بهداشت خودکار دایرکتوری) — سربار هر میزبان O(همسایه‌ها) و پیلودها سقف‌دار؛ همان الگوی اثبات‌شدهٔ Matrix/ActivityPub
 - هویت ساده شد: نام کاربری = آیدی = کد نود = آدرس شبکه؛ ورود یک‌فیلدی؛ سازگاری با کدهای قدیمی حفظ شد (fallback تولیدی کد)
 - مقیاس در سه محور مهار شد: پیلود (سقف roster/hints)، merge (دسته‌ای)، حافظه (TTL) — مسیر تکامل بعدی (sync دلتایی/هاب درجه‌دوم) در README مستند است
+
+---
+Task ID: 10
+Agent: main (Z.ai)
+Task: نشست ایزوله per-tab — هر تب یک کاربر، آیدی در آدرس‌بار (?u=)، خروج پاک؛ صفر نشت بین تب‌ها
+
+Work Log:
+- ریشه‌یابی: نشست قبلی کوکی httpOnly مشترک بین همه‌ی تب‌ها بود (nh_session + جدول Session) — دو تب = یک کاربر، خروج یکی دیگری را هم بیرون می‌انداخت
+- auth.ts بازنویسی شد: getSessionUser (کوکی) → getTabUser(req) — هویت از هدر x-nh-user (نام URL-encode شده برای پشتیبانی فارسی) و اعتبارسنجی زنده در DB در «هر» درخواست؛ startSession/endSession و SESSION_COOKIE حذف
+- schema.prisma: مدل Session و رابطه User.sessions حذف شد (دوره‌ی بی‌جلسه-سمت-سرور)؛ db push اعمال شد
+- /api/auth/enter: بدون کوچه؛ بست نام ممنوع (جداکننده‌ی کلید گفتگو conv:host|node) + نویسه‌های کنترلی؛ ورود تکراری idempotent ماند
+- /api/auth/me و /api/auth/logout حذف شدند (مسیر مرده — viewer با هر bootstrap برمی‌گردد؛ خروج فقط سمت تب)
+- پروکسی /api/nh/* و سه مسیر ادمین: viewer یک‌بار در ابتدای forward از هدر حل می‌شود؛ حذف getSessionUserهای تکراری؛ تعلیق کاربر = قطع از درخواست بعدی (بدون چیزی برای revoke)
+- session.ts جدید (کلاینت): readTabUser/writeTabUser/clearTabUser روی sessionStorage (per-tab by spec) + tabUserHeaders + setUrlForUser/urlUserName — هیچ‌چیز به localStorage یا کوکی نمی‌رود
+- api.ts: nhGet/nhPost/nhDelete/nhJson خودکار هدر x-nh-user تب خودشان را می‌فرستند
+- store.ts بازنویسی: boot() یک‌بار در هر تب — URL منبع حقیقت: ?u= موجود → fast-path از sessionStorage یا silent enter (پیوستن لینک ?u=X در تب تازه = ورود همان کاربر؛ قرارداد تست بدون رمز)؛ ?u= غایب → تب مهمان؛ refresh() اگر سرور هویت تب را رد کند خودش نشست + پارامتر را پاک می‌کند؛ login() نشست و URL را «با هم» می‌نویسد؛ logout() هر دو را پاک می‌کند (بدون فراخوانی سرور)
+- page.tsx: mount = boot() + polling؛ AuthGate: ورود از طریق store.login با نتیجه‌ی موفق/ناموفق + متن تازه‌ی «نشست فقط در همین تب؛ آیدی به آدرس‌بار می‌رود و با خروج حذف می‌شود»
+- Header: چیپ کاربر با آدرس کامل شبکه‌ای id@host-code؛ MyNode: NodeHeader هم hostName→hostCode (آدرس واقعی NHP)
+- scripts/start-web.sh: health-check از /api/auth/me (حذف‌شده) به /api/nh/bootstrap
+- tests/smoke-tab-auth.sh جدید (۲۱ چک): enter idempotent، رد نام دارای |، دو هدر روی یک URL = دو viewer، مهمان بدون توکن، نام ناشناخته در هدر = مهمان، چت دو کاربر هم‌هاست، و سه گیت 403 (mailbox/chat-app/modules)
+- رفع عملیاتی: rm -rf .next زیر dev server زنده ۵۰۰ داد → وب در حالت production (مطابق دیپلوی) با start-web.sh بالا آمد
+- E2E با Agent Browser (سه تب هم‌زمان): ورود میلی → ?u=میلی در آدرس‌بار؛ رفرش → برقرار؛ تب ۲ بدون پارامتر → مهمان (صفر نشت)؛ ورود بابک در تب ۲ → تب ۱ همچنان میلی؛ خروج در تب ۱ → آدرس‌بارش خالی و AuthGate، تب ۲ دست‌نخورده بابک؛ تب تازه با لینک ?u=میلی → ورود خودکار
+
+Stage Summary:
+- جداسازی نشست کامل شد: کوکی/جدول Session/محلی‌سازی سمت سرور حذف؛ هویت = هدر هر درخواست که سرور هر بار زنده اعتبارسنجی می‌کند → دو تب ذاتاً دو کاربر، خروج/تعلیق/نشت عملاً بی‌معنا
+- آدرس‌بار حامل هویت است: ورود = ظهور ?u=آیدی، خروج = محو آن؛ بازکردن لینک در تب تازه = همان کاربر (ساده‌ترین جریان تست چندکاربره)
+- ۲۱/۲۱ smoke + چرخه‌ی کامل مرورگری سبز؛ tsc/eslint/next build تمیز؛ معماری onApi و NHP 1.1 دست‌نخورده

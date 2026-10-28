@@ -52,10 +52,12 @@ model Node {
 }
 
 /// A registered web user of THIS NodeHost instance.
-/// Passwordless era: the username IS the identity (id = name) — the session
-/// cookie is the only credential. The username is ALSO the personal node's
-/// routing code, so one string names the user, their node and their
-/// network address at once.
+/// Passwordless, TAB-ISOLATED era: the username IS the identity (id = name).
+/// There are no cookies and no server sessions — each browser tab carries
+/// its viewer in the `x-nh-user` header (sessionStorage + ?u= in the URL),
+/// and the server re-validates the account on every request. The username
+/// is ALSO the personal node's routing code, so one string names the user,
+/// their node and their network address at once.
 /// The first user to register becomes the admin (role="admin") when no
 /// admin exists yet — self-hosted bootstrap without seeded credentials.
 model User {
@@ -64,21 +66,7 @@ model User {
   role         String    @default("user") // user | admin
   status       String    @default("active") // active | suspended
   createdAt    DateTime  @default(now())
-  sessions     Session[]
   nodes        Node[]
-}
-
-/// Web sessions — the cookie carries the raw token, the DB stores its
-/// sha256 so a database leak never yields usable cookies.
-model Session {
-  id        String   @id @default(cuid())
-  tokenHash String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  @@index([userId])
 }
 
 /// Instance-wide settings owned by the admin (key-value, typed at use site).

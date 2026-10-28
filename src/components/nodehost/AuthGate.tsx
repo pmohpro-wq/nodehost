@@ -1,11 +1,12 @@
 'use client'
 
 /**
- * AuthGate — the tenant door of NodeHost, passwordless era.
+ * AuthGate — the tenant door of NodeHost, passwordless + tab-isolated era.
  * ONE field: the username. It IS the account id, the personal node's id
  * and the network address — type it once and you are in (first time
  * creates the account + node, next times it just logs you in).
- * First registrant = instance admin.
+ * The session lives in THIS tab only and the id shows up in the address
+ * bar; other tabs (other users) are never touched.
  */
 import { useState } from 'react'
 import { Network, LogIn, ShieldCheck } from 'lucide-react'
@@ -14,20 +15,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
-import { nhJson } from './api'
 import { useNh } from './store'
-import type { ViewerInfo } from './types'
-
-interface EnterOk {
-  ok: boolean
-  created?: boolean
-  user: ViewerInfo
-  nodeCreated?: boolean
-}
 
 export function AuthGate() {
   const { toast } = useToast()
-  const { loadMe, refresh, firstUserPending } = useNh()
+  const { login, firstUserPending } = useNh()
   const [busy, setBusy] = useState(false)
   const [name, setName] = useState('')
 
@@ -36,19 +28,19 @@ export function AuthGate() {
     if (trimmed.length < 2) return
     setBusy(true)
     try {
-      const res = await nhJson<EnterOk>('/api/auth/enter', 'POST', { name: trimmed })
-      toast({
-        title:
-          res.user.role === 'admin'
-            ? 'خوش آمدید — شما ادمین این نودهاست هستید'
-            : res.created
-              ? 'خوش آمدید — حساب و نود شخصی شما آماده است'
-              : 'خوش آمدید',
-      })
-      await loadMe()
-      await refresh()
-    } catch (err) {
-      toast({ title: 'ورود ناموفق بود', description: String(err), variant: 'destructive' })
+      const res = await login(trimmed)
+      if (res.ok) {
+        toast({
+          title:
+            res.user.role === 'admin'
+              ? 'خوش آمدید — شما ادمین این نودهاست هستید'
+              : res.created
+                ? 'خوش آمدید — حساب و نود شخصی شما آماده است'
+                : 'خوش آمدید',
+        })
+      } else {
+        toast({ title: 'ورود ناموفق بود', description: res.error, variant: 'destructive' })
+      }
     } finally {
       setBusy(false)
     }
@@ -89,8 +81,9 @@ export function AuthGate() {
                 <LogIn className="size-4" /> ورود / ثبت‌نام
               </Button>
               <p className="text-[11px] text-muted-foreground leading-5 text-center">
-                بدون رمز و ایمیل؛ نشست شما با کوکی نگه داشته می‌شود. آدرس شبکه‌ای شما
-                بعداً به شکل <span dir="ltr" className="font-mono">(نودهاست، همین نام)</span> دیده می‌شود.
+                بدون رمز و ایمیل. نشست فقط در <span className="font-medium">همین تب</span> ذخیره می‌شود
+                و آیدی شما به آدرس‌بار اضافه می‌گردد (<span dir="ltr" className="font-mono">?u=آیدی</span>) —
+                با خروج، از آدرس‌بار حذف می‌شود. هر تب می‌تواند کاربر جداگانه‌ای باشد و داده‌ای بین تب‌ها جابه‌جا نمی‌شود.
               </p>
             </CardContent>
           </Card>

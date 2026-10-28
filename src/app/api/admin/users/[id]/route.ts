@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { getTabUser } from '@/lib/auth'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -9,7 +9,7 @@ type Ctx = { params: Promise<{ id: string }> }
  * An admin can never change their OWN account (no accidental lockout).
  */
 export async function PATCH(req: NextRequest, ctx: Ctx) {
-  const me = await getSessionUser()
+  const me = await getTabUser(req)
   if (!me) return NextResponse.json({ ok: false, error: 'ورود لازم است' }, { status: 401 })
   if (me.role !== 'admin')
     return NextResponse.json({ ok: false, error: 'دسترسی ادمین لازم است' }, { status: 403 })
@@ -48,8 +48,8 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   }
 
   const user = await db.user.update({ where: { id }, data })
-  // Suspending a user revokes ALL their live sessions immediately.
-  if (data.status === 'suspended') await db.session.deleteMany({ where: { userId: id } })
+  // No server sessions exist to revoke — a suspended user is cut off on
+  // their very next request (the tab header fails resolution).
 
   return NextResponse.json({
     ok: true,

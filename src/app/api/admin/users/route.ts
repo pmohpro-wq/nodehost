@@ -1,10 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { getTabUser } from '@/lib/auth'
 
 /** GET /api/admin/users — admin-only user directory (with node counts). */
-export async function GET() {
-  const me = await getSessionUser()
+export async function GET(req: NextRequest) {
+  const me = await getTabUser(req)
   if (!me) return NextResponse.json({ ok: false, error: 'ورود لازم است' }, { status: 401 })
   if (me.role !== 'admin')
     return NextResponse.json({ ok: false, error: 'دسترسی ادمین لازم است' }, { status: 403 })

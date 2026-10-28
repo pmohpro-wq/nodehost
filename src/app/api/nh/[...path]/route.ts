@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getSessionUser } from '@/lib/auth'
+import { getTabUser } from '@/lib/auth'
 import { canManageNode, sanitizeBootstrap, type RawBootstrap } from '@/lib/tenant'
 
 /**
  * Control-plane GATE — the single door between browsers and the kernel.
  *
  * Tenancy policy lives HERE, not in the kernel:
- *   - every mutation requires a session; node mutations require ownership
- *     (or the admin role); federation management requires the admin role;
+ *   - every caller is resolved from the tab's `x-nh-user` header (per-tab
+ *     sessions — no shared cookies, two tabs are two independent viewers);
+ *   - every mutation requires a signed-in viewer; node mutations require
+ *     ownership (or the admin role); federation management requires the
+ *     admin role;
  *   - node creation enforces the admin-configured quota (maxNodes, default 50)
  *     and stamps the creator as owner;
  *   - reads are sanitized per viewer (see tenant.ts) — tokens of user-owned
@@ -53,7 +56,9 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const joined = sub.join('/')
   const search = new URL(req.url).search
   const method = req.method
-  const viewer = await getSessionUser()
+  // One per-request resolution from the tab header — the whole gate below
+  // keys off THIS viewer and nothing else (no cookie, no server session).
+  const viewer = await getTabUser(req)
 
   // ------------------------------------------------------------
   // READS
@@ -61,7 +66,6 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
   // GET bootstrap → sanitized per viewer.
   if (method === 'GET' && joined === 'bootstrap') {
-    const viewer = await getSessionUser()
     const raw = (await (async () => {
       try {
         const res = await fetch(`${KERNEL_API}/internal/bootstrap`, { cache: 'no-store' })
@@ -79,7 +83,6 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   // GET mailbox/<nodeCode> → owner or admin only.
   const mailbox = joined.match(/^mailbox\/([^/]+)$/)
   if (method === 'GET' && mailbox) {
-    const viewer = await getSessionUser()
     if (!viewer) return unauthorized()
     const node = await db.node.findUnique({ where: { code: mailbox[1] } })
     if (!node) return json({ ok: false, error: 'نود یافت نشد' }, 404)
@@ -90,7 +93,6 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   // GET nodes/<ref>/apps/<moduleId>[/<rest>] → module app API (owner/admin).
   const appGet = joined.match(/^nodes\/([^/]+)\/apps\/([^/]+)(\/.*)?$/)
   if (method === 'GET' && appGet) {
-    const viewer = await getSessionUser()
     if (!viewer) return unauthorized()
     const node = await db.node.findUnique({ where: { id: appGet[1] } })
     if (!node) return json({ ok: false, error: 'نود یافت نشد' }, 404)

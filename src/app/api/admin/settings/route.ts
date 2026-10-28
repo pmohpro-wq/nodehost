@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getSessionUser, getMaxNodes, setMaxNodes } from '@/lib/auth'
+import { getTabUser, getMaxNodes, setMaxNodes } from '@/lib/auth'
 
 /** GET /api/admin/settings — instance settings (admin only). */
-export async function GET() {
-  const me = await getSessionUser()
+export async function GET(req: NextRequest) {
+  const me = await getTabUser(req)
   if (!me) return NextResponse.json({ ok: false, error: 'ورود لازم است' }, { status: 401 })
   if (me.role !== 'admin')
     return NextResponse.json({ ok: false, error: 'دسترسی ادمین لازم است' }, { status: 403 })
@@ -14,7 +13,7 @@ export async function GET() {
 
 /** PATCH /api/admin/settings — update maxNodes (the per-host node cap). */
 export async function PATCH(req: NextRequest) {
-  const me = await getSessionUser()
+  const me = await getTabUser(req)
   if (!me) return NextResponse.json({ ok: false, error: 'ورود لازم است' }, { status: 401 })
   if (me.role !== 'admin')
     return NextResponse.json({ ok: false, error: 'دسترسی ادمین لازم است' }, { status: 403 })

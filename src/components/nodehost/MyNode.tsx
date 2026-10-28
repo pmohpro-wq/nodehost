@@ -64,7 +64,7 @@ export function MyNode() {
     <div className="space-y-6">
       {myNode ? (
         <>
-          <NodeHeader node={myNode} hostName={data.host.name} />
+          <NodeHeader node={myNode} hostCode={data.host.code} />
           <ModuleSwitches node={myNode} modules={data.modules} />
           <AppMount node={myNode} />
         </>
@@ -94,7 +94,7 @@ export function MyNode() {
 // ------------------------------------------------------------------
 // Node header — identity + status. Nothing else.
 // ------------------------------------------------------------------
-function NodeHeader({ node, hostName }: { node: NodeDto; hostName: string }) {
+function NodeHeader({ node, hostCode }: { node: NodeDto; hostCode: string }) {
   return (
     <Card>
       <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-3 py-5">
@@ -105,7 +105,7 @@ function NodeHeader({ node, hostName }: { node: NodeDto; hostName: string }) {
           <div>
             <div className="font-bold text-[15px] leading-6">{node.name}</div>
             <div className="text-[11px] text-muted-foreground ltr-block" dir="ltr">
-              {node.code}@{hostName}
+              {node.code}@{hostCode}
             </div>
           </div>
         </div>

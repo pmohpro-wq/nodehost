@@ -1,27 +1,27 @@
 /**
- * auth.ts — web-layer identity for NodeHost.
+ * auth.ts — web-layer identity for NodeHost, TAB-ISOLATED era.
  *
  * Design: the kernel stays user-agnostic; ALL tenancy lives here.
  *  - Passwordless era: the username IS the identity (id = name) and the
- *    only credential is the session cookie. This is a deliberate product
+ *    only credential is the name itself. This is a deliberate product
  *    decision for frictionless testing — re-login = type the same name.
- *  - Sessions: the cookie carries a random 32-byte token; the DB stores
- *    only its sha256, so a database leak never yields usable cookies.
- *  - Bootstrap rule for self-hosted instances: the FIRST user to register
- *    becomes the admin when no admin exists yet.
+ *
+ *  - TAB ISOLATION (no cookies, no server sessions): the browser sends the
+ *    viewer's name in the `x-nh-user` request header on EVERY API call, and
+ *    the server re-resolves the account from that header per request. The
+ *    tab keeps its session in sessionStorage (per-tab by spec) and its URL
+ *    carries `?u=<name>` — so each browser tab is one independent viewer:
+ *    two tabs = two users, logout in one never touches the other, and no
+ *    shared cookie/storage can leak data across tabs.
+ *
+ *    Header values travel URL-encoded (Persian names are not latin1-safe),
+ *    and every request is validated against the live User table, so a
+ *    suspended account is cut off on its very next call.
  */
-import { randomBytes, createHash } from 'node:crypto'
-import { cookies } from 'next/headers'
 import { db } from '@/lib/db'
 
-export const SESSION_COOKIE = 'nh_session'
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
-
-// ------------------------------------------------------------
-// Sessions
-// ------------------------------------------------------------
-
-const sha256 = (v: string) => createHash('sha256').update(v).digest('hex')
+/** Request header carrying the tab's viewer (URL-encoded username). */
+export const USER_HEADER = 'x-nh-user'
 
 export interface SafeUser {
   id: string
@@ -45,45 +45,24 @@ const toSafeUser = (u: {
   createdAt: u.createdAt.toISOString(),
 })
 
-/** Create a session row + set the httpOnly cookie. */
-export async function startSession(userId: string): Promise<void> {
-  const token = randomBytes(32).toString('base64url')
-  await db.session.create({
-    data: { tokenHash: sha256(token), userId, expiresAt: new Date(Date.now() + SESSION_TTL_MS) },
-  })
-  const jar = await cookies()
-  jar.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: SESSION_TTL_MS / 1000,
-  })
-}
-
-/** Delete the session row + clear the cookie. */
-export async function endSession(): Promise<void> {
-  const jar = await cookies()
-  const token = jar.get(SESSION_COOKIE)?.value
-  if (token) await db.session.deleteMany({ where: { tokenHash: sha256(token) } })
-  jar.delete(SESSION_COOKIE)
-}
-
 /**
- * Resolve the signed-in user from the session cookie.
- * Returns null for guests, expired sessions and suspended users.
+ * Resolve the calling tab's user from the `x-nh-user` header.
+ * Returns null for guests (no header), unknown names, expired… nothing to
+ * expire — and suspended users (rejected on the spot, per request).
  */
-export async function getSessionUser(): Promise<SafeUser | null> {
-  const jar = await cookies()
-  const token = jar.get(SESSION_COOKIE)?.value
-  if (!token) return null
-  const session = await db.session.findUnique({
-    where: { tokenHash: sha256(token) },
-    include: { user: true },
-  })
-  if (!session || session.expiresAt.getTime() < Date.now()) return null
-  if (session.user.status !== 'active') return null
-  return toSafeUser(session.user)
+export async function getTabUser(req: Request): Promise<SafeUser | null> {
+  const raw = req.headers.get(USER_HEADER)?.trim()
+  if (!raw) return null
+  let name: string
+  try {
+    name = decodeURIComponent(raw)
+  } catch {
+    return null
+  }
+  if (!name) return null
+  const user = await db.user.findUnique({ where: { name } })
+  if (!user || user.status !== 'active') return null
+  return toSafeUser(user)
 }
 
 /** True while the instance has no admin yet (first registrant becomes admin). */

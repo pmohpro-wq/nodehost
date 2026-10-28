@@ -2,8 +2,9 @@
 
 /**
  * NodeHost — simple by design.
- * Guest → sign in / sign up. Member → MY node (one per user) with its
- * test modules. Admin additionally sees the user list. That's the whole app.
+ * Each tab boots from its address bar (`?u=<id>`): identity → session →
+ * panel. Guest tabs see the sign-in gate. Two tabs are two independent
+ * users; logout in one never touches the other.
  */
 import { useEffect } from 'react'
 import { Header } from '@/components/nodehost/Header'
@@ -14,14 +15,13 @@ import { UI_POLL_MS, useNh } from '@/components/nodehost/store'
 import { Network } from 'lucide-react'
 
 export default function Home() {
-  const { me, refresh, loadMe } = useNh()
+  const { me, boot, refresh } = useNh()
 
   useEffect(() => {
-    void loadMe()
-    void refresh()
+    void boot()
     const t = setInterval(() => void refresh(), UI_POLL_MS)
     return () => clearInterval(t)
-  }, [loadMe, refresh])
+  }, [boot, refresh])
 
   // Viewer not resolved yet → tiny splash (avoids flashing the auth gate).
   if (me === undefined) {

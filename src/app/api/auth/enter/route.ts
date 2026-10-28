@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { startSession, needsFirstAdmin } from '@/lib/auth'
+import { needsFirstAdmin } from '@/lib/auth'
 
 /**
  * POST /api/auth/enter — the ONE door of the passwordless era.
@@ -11,7 +11,11 @@ import { startSession, needsFirstAdmin } from '@/lib/auth'
  *
  *   - name is new      → account + personal node are created (first
  *                        registrant of a fresh instance becomes admin).
- *   - name already exists → the session opens for that account.
+ *   - name already exists → the account opens for that name.
+ *
+ * No cookie is issued: the TAB keeps the session (sessionStorage + ?u=
+ * in the address bar) and presents it as the `x-nh-user` header on every
+ * call — which is what makes two tabs two independent users.
  *
  * Trade-off (deliberate, documented): without passwords anyone who knows
  * the name can open the account. Fine for testing-first deployments; a
@@ -31,13 +35,19 @@ export async function POST(req: NextRequest) {
       { ok: false, error: 'نام کاربری باید بین ۲ تا ۴۰ نویسه باشد' },
       { status: 422 },
     )
+  // '|' is the chat conversation-key separator (conv:<host>|<node>) — a name
+  // containing it would forge cross-recipient keys; control chars break URLs.
+  if (/[\u0000-\u001f\u007f|]/.test(name))
+    return NextResponse.json(
+      { ok: false, error: 'این نویسه در نام کاربری مجاز نیست' },
+      { status: 422 },
+    )
 
   // Existing name → plain login.
   const existing = await db.user.findUnique({ where: { name } })
   if (existing) {
     if (existing.status !== 'active')
       return NextResponse.json({ ok: false, error: 'این حساب غیرفعال است' }, { status: 403 })
-    await startSession(existing.id)
     return NextResponse.json({
       ok: true,
       created: false,
@@ -74,7 +84,6 @@ export async function POST(req: NextRequest) {
     nodeCreated = false
   }
 
-  await startSession(user.id)
   return NextResponse.json({
     ok: true,
     created: true,
