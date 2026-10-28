@@ -222,14 +222,14 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
       name: 'نود آلفا-۱ (سرور اصلی)',
       token: 'demo-token-a1',
       hostId: self.id,
-      enabled: ['chat'],
+      enabled: ['chat', 'contacts'],
     })
     await upsertDemoNode({
       code: 'node-a2',
       name: 'نود آلفا-۲ (پیام‌رسان)',
       token: 'demo-token-a2',
       hostId: self.id,
-      enabled: ['chat'],
+      enabled: ['chat', 'contacts'],
     })
     await upsertDemoNode({
       code: 'node-a3',
@@ -257,14 +257,14 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
       name: 'نود بتا-۱ (پیام‌رسان)',
       token: 'demo-token-b1',
       hostId: self.id,
-      enabled: ['chat'],
+      enabled: ['chat', 'contacts'],
     })
     await upsertDemoNode({
       code: 'node-b2',
       name: 'نود بتا-۲ (سبک)',
       token: 'demo-token-b2',
       hostId: self.id,
-      enabled: ['chat'],
+      enabled: ['chat', 'contacts'],
     })
   }
 

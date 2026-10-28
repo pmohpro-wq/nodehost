@@ -20,6 +20,7 @@ import {
   urlUserName,
   writeTabUser,
 } from './session'
+import type { NhpAddress } from '@/core/nodehost/protocol'
 import type { BootstrapDto, ViewerInfo } from './types'
 
 /** Live-poll interval of the panel (bootstrap refresh). */
@@ -43,6 +44,14 @@ interface NhState {
   login: (name: string) => Promise<LoginResult>
   /** Forget this tab's session and strip the identity from the address bar. */
   logout: () => Promise<void>
+  /**
+   * Cross-app jump within THIS tab (e.g. contacts → chat). Deliberately
+   * plain component-level state in the tab-scoped store: it never crosses
+   * tabs, so tab isolation holds by construction.
+   */
+  chatFocus: NhpAddress | null
+  focusChat: (peer: NhpAddress) => void
+  clearChatFocus: () => void
 }
 
 let bootStarted = false
@@ -150,4 +159,8 @@ export const useNh = create<NhState>((set, get) => ({
     set({ data: null, me: null, firstUserPending: false })
     await get().refresh() // guest bootstrap (drives the first-admin hint)
   },
+
+  chatFocus: null,
+  focusChat: (peer) => set({ chatFocus: { host: peer.host, node: peer.node } }),
+  clearChatFocus: () => set({ chatFocus: null }),
 }))

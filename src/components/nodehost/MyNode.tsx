@@ -13,7 +13,7 @@
  * the kernel where it belongs.
  */
 import { useMemo, useState } from 'react'
-import { Server, RefreshCw, Power, MessageCircle } from 'lucide-react'
+import { LayoutGrid, Server, RefreshCw, Power } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -23,6 +23,7 @@ import { nhPost, ago } from './api'
 import { useNh } from './store'
 import { StatusDot } from './bits'
 import { ChatApp } from './ChatApp'
+import { ContactsApp } from './ContactsApp'
 import type { NodeDto } from './types'
 
 export function MyNode() {
@@ -195,20 +196,28 @@ function ModuleSwitches({
 
 // ------------------------------------------------------------------
 // App mount — every ENABLED module opens its own real app below the
-// switches. The messenger (chat) is the built-in app of every node.
+// switches. Known modules map to their app; anything else (a third-
+// party module without a bundled UI) simply contributes to the roster.
 // ------------------------------------------------------------------
 function AppMount({ node }: { node: NodeDto }) {
-  const chatOn = node.moduleStates.find((s) => s.moduleId === 'chat')?.enabled ?? false
-  if (chatOn) return <ChatApp node={node} />
+  const on = (id: string) => node.moduleStates.some((s) => s.moduleId === id && s.enabled)
+  const anyApp = on('chat') || on('contacts')
+  if (!anyApp)
+    return (
+      <Card>
+        <CardContent className="py-8 text-center space-y-2">
+          <LayoutGrid className="size-7 mx-auto text-muted-foreground/50" />
+          <p className="text-sm text-muted-foreground leading-6">
+            هیچ اپی روشن نیست — کلید ماژول‌ها را روشن کنید تا اپ کامل هرکدام همین‌جا باز شود:
+            پیام‌رسان (گفتگو با هر نود شبکه) و مخاطبین (دفترچهٔ شخصی آدرس‌ها).
+          </p>
+        </CardContent>
+      </Card>
+    )
   return (
-    <Card>
-      <CardContent className="py-8 text-center space-y-2">
-        <MessageCircle className="size-7 mx-auto text-muted-foreground/50" />
-        <p className="text-sm text-muted-foreground leading-6">
-          پیام‌رسان خاموش است — کلید آن را روشن کنید تا اپ کامل آن همین‌جا باز شود:
-          گفتگو با هر نود شبکه، دفترچه گیرنده‌ها، تاریخچه و خوانده‌نشده‌ها.
-        </p>
-      </CardContent>
-    </Card>
+    <div className="space-y-6">
+      {on('chat') && <ChatApp node={node} />}
+      {on('contacts') && <ContactsApp node={node} />}
+    </div>
   )
 }

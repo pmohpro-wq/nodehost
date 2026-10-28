@@ -14,13 +14,14 @@
  * Live updates ride a 2.5s poll (conversations + the open thread).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MessageCircle, RefreshCw, SendHorizontal, Users } from 'lucide-react'
+import { MessageCircle, RefreshCw, SendHorizontal, UserPlus, Users } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { nhGet, nhPost } from './api'
+import { useNh } from './store'
 import type { NodeDto } from './types'
 
 interface Peer {
@@ -68,6 +69,11 @@ const clockOf = (at: number) =>
 export function ChatApp({ node }: { node: NodeDto }) {
   const { toast } = useToast()
   const base = `nodes/${node.id}/apps/chat`
+  const chatFocus = useNh((s) => s.chatFocus)
+  const clearChatFocus = useNh((s) => s.clearChatFocus)
+  // The contacts app can deep-link INTO the messenger — only when the
+  // address book is itself enabled (its app API would 409 otherwise).
+  const contactsOn = node.moduleStates.some((s) => s.moduleId === 'contacts' && s.enabled)
 
   const [convs, setConvs] = useState<Conversation[]>([])
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -128,11 +134,22 @@ export function ChatApp({ node }: { node: NodeDto }) {
     if (el) el.scrollTop = el.scrollHeight
   }, [msgs])
 
-  const open = (peer: Peer) => {
-    setSelected(peer)
-    setMsgs([])
-    void loadMsgs(peer)
-  }
+  const open = useCallback(
+    (peer: Peer) => {
+      setSelected(peer)
+      setMsgs([])
+      void loadMsgs(peer)
+    },
+    [loadMsgs],
+  )
+
+  // Deep link from the contacts app (tab-scoped store signal).
+  useEffect(() => {
+    if (chatFocus) {
+      open({ host: chatFocus.host, node: chatFocus.node })
+      clearChatFocus()
+    }
+  }, [chatFocus, open, clearChatFocus])
 
   const send = async () => {
     if (!selected || !text.trim() || sending) return
@@ -153,6 +170,21 @@ export function ChatApp({ node }: { node: NodeDto }) {
       toast({ title: 'ارسال ناموفق بود', description: String(err), variant: 'destructive' })
     } finally {
       setSending(false)
+    }
+  }
+
+  const saveToContacts = async () => {
+    if (!selected) return
+    try {
+      const res = await nhPost<{ ok: boolean; alreadyExisted: boolean }>(
+        `nodes/${node.id}/apps/contacts/add`,
+        { host: selected.host, node: selected.node, name: selectedPeer?.name ?? '' },
+      )
+      toast({
+        title: res.alreadyExisted ? 'از قبل در مخاطبین شما بود' : 'به مخاطبین اضافه شد',
+      })
+    } catch (err) {
+      toast({ title: 'افزودن به مخاطبین ناموفق بود', description: String(err), variant: 'destructive' })
     }
   }
 
@@ -248,16 +280,29 @@ export function ChatApp({ node }: { node: NodeDto }) {
         <div className="rounded-xl border flex flex-col min-h-[420px]">
           {selected ? (
             <>
-              <div className="px-4 py-2.5 border-b bg-muted/50">
-                <div className="font-medium text-sm">
-                  {selectedPeer?.name ?? selected.node}
-                  {!selectedPeer && (
-                    <span className="text-[10px] text-muted-foreground"> (چت خاموش)</span>
-                  )}
+              <div className="px-4 py-2.5 border-b bg-muted/50 flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-sm">
+                    {selectedPeer?.name ?? selected.node}
+                    {!selectedPeer && (
+                      <span className="text-[10px] text-muted-foreground"> (چت خاموش)</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground" dir="ltr">
+                    {selected.host}/{selected.node}
+                  </div>
                 </div>
-                <div className="text-[11px] text-muted-foreground" dir="ltr">
-                  {selected.host}/{selected.node}
-                </div>
+                {contactsOn && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-7 shrink-0"
+                    title="افزودن به مخاطبین"
+                    onClick={() => void saveToContacts()}
+                  >
+                    <UserPlus className="size-4" />
+                  </Button>
+                )}
               </div>
 
               <div ref={scrollerRef} className="flex-1 overflow-y-auto p-4 space-y-2.5">

@@ -13,14 +13,17 @@
  */
 import { createServer } from 'http'
 import { Server as SocketIOServer } from 'socket.io'
-// Built-in modules — the node's apps. One app per concern; the messenger.
+// Built-in modules — the node's apps. One app per concern; the messenger
+// and the personal address book.
 import chatModule from '../../src/core/nodehost/modules/chat'
+import contactsModule from '../../src/core/nodehost/modules/contacts'
 import { Kernel } from './kernel'
 import { handleApi } from './admin'
 import { ENV, log } from './store'
 
 const kernel = new Kernel()
 kernel.registerModule(chatModule)
+kernel.registerModule(contactsModule)
 
 // ------------------------------------------------------------
 // Socket.io (admin data-plane) — path "/" per gateway contract
