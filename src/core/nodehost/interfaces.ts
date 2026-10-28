@@ -60,6 +60,14 @@ export interface IReceipt {
   outcome: RouteOutcome
 }
 
+/** Result of a correlated request() call. */
+export interface IRequestResult {
+  ok: boolean
+  /** The reply envelope (matched via replyTo) when ok. */
+  reply?: NhpEnvelope
+  error?: string
+}
+
 /**
  * Everything a module may touch. This is the sandbox wall:
  * no DB handles, no sockets, no globals — only this context.
@@ -75,6 +83,18 @@ export interface INodeContext {
   logger: ILogger
   /** Send a new envelope from the hosting node. */
   send(to: NhpAddress, module: string, type: string, payload: unknown): Promise<IReceipt>
+  /**
+   * Send and AWAIT the correlated reply envelope (NHP request/response).
+   * The remote module's returned envelope is matched via `replyTo`.
+   * Resolves `{ ok: false, error }` on timeout (default 10s) or rejection.
+   */
+  request(
+    to: NhpAddress,
+    module: string,
+    type: string,
+    payload: unknown,
+    opts?: { timeoutMs?: number },
+  ): Promise<IRequestResult>
   /** Fan-out to every node (local + federation) that enabled `module`. */
   broadcast(module: string, type: string, payload: unknown): Promise<number>
   /** Query the live network directory (local nodes + learned rosters). */

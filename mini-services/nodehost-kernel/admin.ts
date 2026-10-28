@@ -8,8 +8,9 @@
  */
 import type { Kernel } from './kernel'
 import { isValidEnvelope, NHP_SYS } from '../../src/core/nodehost/protocol'
+import { verifyIngressAuth } from './federation'
 import { listMailbox } from './mailbox'
-import { localRoster, log, newAdminToken, newNodeCode, prisma } from './store'
+import { log, newAdminToken, newNodeCode, prisma } from './store'
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -25,23 +26,18 @@ const readBody = async <T>(req: Request): Promise<T> => {
   }
 }
 
-/** Peer hello response payload (our roster, for the caller's directory). */
-async function selfHello(kernel: Kernel) {
-  return {
-    host: {
-      code: kernel.self.code,
-      name: kernel.self.name,
-      gwPort: kernel.self.gwPort,
-      address: kernel.self.address,
-    },
-    nodes: await localRoster(kernel.adminOnline),
-  }
-}
-
-// -----------------------------------------------------------
-// NHP data-plane: the ONLY endpoint remote kernels talk to
-// -----------------------------------------------------------
+/**
+ * NHP data-plane: the ONLY endpoint remote kernels talk to.
+ * When NHP_LINK_SECRET is configured, requests MUST carry
+ * "Authorization: Bearer <secret>" — otherwise 401.
+ */
 async function handleIngress(req: Request, kernel: Kernel): Promise<Response> {
+  if (!verifyIngressAuth(req.headers.get('authorization'))) {
+    await log('warn', 'router', 'ingress rejected unauthorized request', {
+      host: req.headers.get('host') ?? '',
+    })
+    return json({ ok: false, error: 'unauthorized ingress' }, 401)
+  }
   let body: unknown
   try {
     body = await req.json()
@@ -53,7 +49,7 @@ async function handleIngress(req: Request, kernel: Kernel): Promise<Response> {
   }
   const outcome = await kernel.route(body, 'ingress')
   if (body.type === NHP_SYS.HELLO) {
-    return json({ ok: true, outcome, hello: await selfHello(kernel) })
+    return json({ ok: true, outcome, hello: await kernel.federation.selfHello() })
   }
   return json({ ok: true, outcome })
 }

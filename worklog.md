@@ -75,3 +75,35 @@ Stage Summary:
 - رفتار بیرونی تغییر نکرده؛ ساختار داخلی کاملاً ماژولار شد: routing (kernel) / persistence (mailbox) / wire-admin (adminSocket) / tuning (config) — هر کدام یک فایل مستقل
 - ایمنی آینده: type-check اجباری در build، تست دود سوکت در tests/، ثابت‌های نام‌دار
 - نقشهٔ توسعهٔ بعدی آسان‌تر شد: ماژول جدید فقط defineModule + registerModule؛ پنل جدید فقط یک فایل در panels/
+
+---
+Task ID: 3
+Agent: main (Z.ai)
+Task: سخت‌سازی اینترفیس ارتباطی میان نودها طبق بازبینی معماری — احراز هویت /ingress، backoff نمایی صف retry، موازی‌سازی فدرال، و API درخواست/پاسخ همبسته برای ماژول‌ها
+
+Work Log:
+- احراز هویت دیتاپلین (اختیاری و بدون شکستن استقرار فعلی):
+  - متغیر محیطی NHP_LINK_SECRET در ENV (store.ts) — وقتی تنظیم شده باشد، /ingress فقط با هدر «Authorization: Bearer <secret>» می‌پذیرد (401 در غیر این صورت)؛ بدون آن، حالت باز قبلی حفظ می‌شود
+  - مقایسهٔ constant-time با timingSafeEqual (node:crypto) در federation.ts؛ خروجی‌های کرنل هم هدر را فقط وقتی راز تنظیم است می‌فرستند
+  - start-kernels.sh مقدار NHP_LINK_SECRET را (در صورت export) به هر دو کرنل می‌رساند
+- استخراج federation.ts از kernel.ts:
+  - transport (postEnvelope/postAndTrack)، حضور (heartbeatOnce/mergeHello/selfHello) و بازیابی (retryQueued) الان در یک ماژول مستقل‌اند — «تنها جای دنبال‌کردن زنده‌بودن میزبان‌ها»
+  - هارت‌بیت و فوروارد wildcard حالا با Promise.all موازی‌اند (قبلاً حلقهٔ ترتیبی)
+- backoff نمایی برای صف ارسال:
+  - delay = RETRY_SWEEP_MS × 2^(attempts−1) با سقف MAX_BACKOFF_MS=120s (config.ts) — بدون هیچ تغییری در اسکیمای Prisma (سازگار با auto-pull داکر)
+  - وضعیت backoff در حافظهٔ Federation نگه‌داری می‌شود (rowId → nextAttemptAt)؛ restart فقط یک تلاش فوری برای صف موجود معنا می‌دهد
+  - settle() در همهٔ مسیرهای خروج از صف (forwarded/dead) فراموشی ردیف را تضمین می‌کند
+- مکانیزم request/response همبسته (RPC ماژول‌ها):
+  - INodeContext.request(to, module, type, payload, {timeoutMs}) در interfaces.ts — پاسخ ماژول مقصد از طریق replyTo به فراخوان تحویل می‌شود (پیش‌فرض ۱۰ ثانیه، REQUEST_TIMEOUT_MS)
+  - kernel: pending map + resolvePending در route()؛ پاکت پاسخ علاوه بر حل‌شدنِ درخواست، مسیر عادی تحویل (mailbox + dispatch) را هم طی می‌کند
+  - پاک‌سازی تایمرهای pending در shutdown()
+- تست‌های دود جدید (خودبسنده، با بوت کرنل واقعی):
+  - tests/smoke-ingress.ts: ماتریس احراز هویت (401×2، 400، 422)، hello مجاز 200 + رستر، چت محلی با ادمین آنلاین هر دو طرف + رسیدن sys.ack همبسته به سوکت فرستنده، صف‌شدن پیام میزبان gama
+  - tests/smoke-federation.ts: دو کرنل با راز مشترک — رد 401 روی beta، merge hello → «alfa online» در دایرکتوری beta، چت بین‌میزبانی alfa→node-b1 با payload سالم فارسی
+- رفع جانبی: باگ خروج زودهنگام start-kernels.sh (گسترش آرایهٔ خالی SECRET_ENV) → پاس‌دادن همیشگی NHP_LINK_SECRET (خالی = حالت باز)
+- README: مستندات امنیت لینک، backoff نمایی، ctx.request و federation.ts در ساختار پروژه
+
+Stage Summary:
+- رفتار حافظه‌ای قبلی کاملاً حفظ شد (تمام تست‌های دود قبلی پاس) و سه ضعف اینترفیس برطرف شد: ingress بدون احراز هویت، retry ثابت بدون backoff، حلقه‌های ترتیبی فدرال
+- نتیجهٔ تست: tsc پاک، eslint پاک، ALL INGRESS TESTS PASSED، ALL FEDERATION TESTS PASSED
+- کرنل الان سه لایهٔ مجاز دارد: routing (kernel) / inter-host (federation) / persistence (mailbox) — افزودن ترنسپورت یا همسایگی جدید فقط تغییر در federation.ts است

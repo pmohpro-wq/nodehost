@@ -10,10 +10,14 @@ KERNEL_DIR="$BASE/mini-services/nodehost-kernel"
 LOG_DIR="$BASE/.zscripts"
 mkdir -p "$LOG_DIR" "$BASE/db"
 
+# Optional federation link security: export NHP_LINK_SECRET=<same value
+# on every peer host> to require "Authorization: Bearer <secret>" on /ingress.
+# Passing it through (possibly empty) is safe: empty = open ingress.
 cd "$KERNEL_DIR"
 
 # --- NodeHost Alfa (primary, control panel binds here) ---
 PORT=3003 API_PORT=3013 \
+NHP_LINK_SECRET="${NHP_LINK_SECRET:-}" \
 DATABASE_URL="file:$BASE/db/host-alfa.db" \
 HOST_CODE=alfa HOST_NAME="نودهاست آلفا" \
 HOST_ADDRESS="http://127.0.0.1:3013/ingress" HOST_GW_PORT=3003 \
@@ -22,6 +26,7 @@ bun --hot index.ts > "$LOG_DIR/kernel-alfa.log" 2>&1 &
 
 # --- NodeHost Beta (second server in the federation demo) ---
 PORT=3004 API_PORT=3014 \
+NHP_LINK_SECRET="${NHP_LINK_SECRET:-}" \
 DATABASE_URL="file:$BASE/db/host-beta.db" \
 HOST_CODE=beta HOST_NAME="نودهاست بتا" \
 HOST_ADDRESS="http://127.0.0.1:3014/ingress" HOST_GW_PORT=3004 \

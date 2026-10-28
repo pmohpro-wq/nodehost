@@ -32,6 +32,13 @@ export const ENV = {
   hostGwPort: process.env.HOST_GW_PORT ? Number(process.env.HOST_GW_PORT) : null,
   seedProfile: process.env.SEED_PROFILE ?? '',
   peer: process.env.PEER ?? '', // "code|name|address|gwPort"
+  /**
+   * Shared federation link secret (NHP_LINK_SECRET).
+   * When set, /ingress REQUIRES "Authorization: Bearer <secret>" and all
+   * outgoing forwards/hellos carry the same header. Both peers of a link
+   * must share the identical value. Empty = open ingress (legacy mode).
+   */
+  linkSecret: process.env.NHP_LINK_SECRET ?? '',
 }
 
 // ------------------------------------------------------------

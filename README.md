@@ -46,9 +46,10 @@
 │   ├── interfaces.ts           ← قرارداد متن‌باز: INodeModule / INodeContext / defineModule
 │   └── modules/                ← ماژول‌های مرجع (chat، broadcast، presence، ping)
 ├── mini-services/nodehost-kernel/  ← هستهٔ اجرایی هر سرور (bun + socket.io + Prisma)
-│   ├── kernel.ts               ← روتر: تحویل محلی / فوروارد HTTP، صف retry، هارت‌بیت فدرال
+│   ├── kernel.ts               ← روتر: تحویل محلی / فوروارد HTTP + مکانیزم request/response همبسته
+│   ├── federation.ts           ← لایهٔ بین‌میزبانی: transport، هارت‌بیت، صف retry با backoff نمایی
 │   ├── runtime.ts              ← زمان‌اجرای ماژول با enable/disable زنده
-│   ├── admin.ts                ← کنترل‌پلین REST + دیتاپلین /ingress
+│   ├── admin.ts                ← کنترل‌پلین REST + دیتاپلین /ingress (با احراز هویت اختیاری)
 │   └── index.ts                ← دو listener (WS + API) و نقطهٔ registerModule
 ├── src/app/                    ← پنل کنترل فارسی RTL (Next.js + shadcn/ui)
 ├── prisma/schema.prisma        ← هر NodeHost = یک دیتابیس مستقل
@@ -73,9 +74,11 @@
 ```
 
 - **آدرس‌دهی کامل** `node@host` — نود بدون توجه به مکان فیزیکی قابل نشانی‌گیری است.
-- **wildcard fan-out** — ارسال به همهٔ نودهای میزبان یک ماژول.
-- **store-and-forward** — میزبان مقصد در دسترس نباشد، پیام تا ۶ بار (هر ۷ ثانیه) retry می‌شود و سپس به dead-letter می‌رود.
+- **wildcard fan-out** — ارسال به همهٔ نودهای میزبان یک ماژول (موزی برای همهٔ میزبان‌ها).
+- **store-and-forward** — میزبان مقصد در دسترس نباشد، پیام تا ۶ بار با backoff نمایی (۷ → ۱۴ → ۲۸ → ۵۶ → ۱۱۲ ثانیه، سقف‌دار) retry می‌شود و سپس به dead-letter می‌رود.
 - **هارت‌بیت فدرال** — میزبان‌ها هر ۸ ثانیه `sys.hello` رد و بدل می‌کنند و دایرکتوری نودها را همگام نگه می‌دارند.
+- **امنیت لینک (اختیاری)** — با تنظیم `NHP_LINK_SECRET` (یک مقدار یکسان روی همهٔ میزبان‌ها)، `/ingress` فقط پاکت‌های دارای هدر `Authorization: Bearer <secret>` را می‌پذیرد (مقایسهٔ constant-time). بدون این متغیر، حالت باز حفظ می‌شود تا استقرارهای قبلی بدون تغییر کار کنند.
+- **request/response همبسته** — ماژول‌ها علاوه بر `ctx.send` از `ctx.request(to, module, type, payload)` می‌توانند استفاده کنند: پاسخِ برگشتیِ ماژول مقصد (از طریق `replyTo`) به‌طور خودکار به فراخوان تحویل می‌شود؛ سقف انتظار پیش‌فرض ۱۰ ثانیه است.
 
 ## راه‌اندازی سریع | Quick Start
 
@@ -88,6 +91,9 @@ bunx prisma generate
 
 # ۳) اجرای دو نودهاست فدرال (alfa: WS 3003 / API 3013 — beta: WS 3004 / API 3014)
 bash scripts/start-kernels.sh
+
+#    (اختیاری) امن‌سازی لینک بین میزبان‌ها — همان مقدار روی همهٔ سرورها:
+#    NHP_LINK_SECRET="یک-راز-مشترک" bash scripts/start-kernels.sh
 
 # ۴) پنل کنترل
 bun dev          # http://localhost:3000

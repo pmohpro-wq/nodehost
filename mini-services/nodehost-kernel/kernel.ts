@@ -1,15 +1,15 @@
 /**
- * kernel.ts — THE NodeHost kernel.
+ * kernel.ts — THE NodeHost kernel (routing brain).
  *
  * Responsibilities:
  *  - Route NHP envelopes (local dispatch / federation forward)
- *  - Store-and-forward: nodes never go offline; temporary failures queue
- *  - Heartbeat federation (sys.hello + roster exchange)
+ *  - Correlated request/response for modules (ctx.request, replyTo)
  *  - Admin socket sessions (delegated to adminSocket.ts)
- *  - Module runtime ownership
+ *  - Module runtime ownership (runtime.ts)
  *
- * Persistence of routed envelopes lives in mailbox.ts, tunables in
- * config.ts — this file stays the routing brain and nothing else.
+ * Everything that talks to OTHER hosts (transport, heartbeat, retry)
+ * lives in federation.ts; envelope persistence lives in mailbox.ts;
+ * tunables in config.ts. This file stays the routing brain only.
  */
 import type { Server as SocketIOServer } from 'socket.io'
 import type { Socket } from 'socket.io'
@@ -25,38 +25,39 @@ import {
 } from '../../src/core/nodehost/protocol'
 import type { IDirectoryEntry, ModuleRegistration } from '../../src/core/nodehost/interfaces'
 import { bindAdminSocket as bindAdminSocketHandlers, adminRoom } from './adminSocket'
-import { HEARTBEAT_MS, MAX_SEND_ATTEMPTS, POST_TIMEOUT_MS, RETRY_BATCH, RETRY_SWEEP_MS } from './config'
-import {
-  alreadyDelivered,
-  bumpRowAttempt,
-  markRowDead,
-  markRowForwarded,
-  recordInbound,
-  recordOutbound,
-} from './mailbox'
+import { HEARTBEAT_MS, REQUEST_TIMEOUT_MS, RETRY_SWEEP_MS } from './config'
+import { Federation } from './federation'
+import { alreadyDelivered, recordInbound, recordOutbound } from './mailbox'
 import { ModuleRuntime } from './runtime'
-import { localRoster, log, prisma } from './store'
+import { log, prisma } from './store'
 
 type RouteSource = 'local' | 'ingress' | 'module' | 'retry'
 
-/** Row of the Host table (subset the router touches). */
-interface PeerHost {
-  id: string
-  code: string
-  address: string
-  status?: string
+interface ReplyWaiter {
+  resolve: (env: NhpEnvelope) => void
+  timer: NodeJS.Timeout
+}
+
+export interface RequestResult {
+  ok: boolean
+  reply?: NhpEnvelope
+  error?: string
 }
 
 export class Kernel {
   /** Loaded module implementations (built-ins + future third-party). */
   readonly registry = new Map<string, ModuleRegistration>()
   runtime!: ModuleRuntime
+  federation!: Federation
 
   /** This host's identity row. */
   self!: { id: string; code: string; name: string; address: string; gwPort: number | null }
 
   /** nodeCode set of currently connected admins. */
   adminOnline = new Set<string>()
+
+  /** env.id of open ctx.request() calls -> reply waiter. */
+  private pending = new Map<string, ReplyWaiter>()
 
   private io!: SocketIOServer
   private bootedAt = Date.now()
@@ -79,6 +80,7 @@ export class Kernel {
   async boot() {
     const { ensureSeed } = await import('./store')
     this.self = await ensureSeed(this.registry)
+    this.federation = new Federation(this)
     this.runtime = new ModuleRuntime(this, this.registry)
     await this.runtime.syncAll()
     await log('info', 'kernel', `NodeHost "${this.self.name}" booted`, {
@@ -87,12 +89,19 @@ export class Kernel {
     })
     await this.heartbeatOnce() // immediate first contact
     this.loops.push(setInterval(() => void this.heartbeatOnce(), HEARTBEAT_MS))
-    this.loops.push(setInterval(() => void this.retryQueued(), RETRY_SWEEP_MS))
+    this.loops.push(setInterval(() => void this.federation.retryQueued(), RETRY_SWEEP_MS))
     this.isBooted = true
   }
 
   shutdown() {
     for (const t of this.loops) clearInterval(t)
+    for (const w of this.pending.values()) clearTimeout(w.timer)
+    this.pending.clear()
+  }
+
+  /** Presence sweep delegate (admin socket + REST trigger points). */
+  heartbeatOnce() {
+    return this.federation.heartbeatOnce()
   }
 
   // ----------------------------------------------------------
@@ -117,6 +126,10 @@ export class Kernel {
     const isSelf = env.to.host === this.self.code
     const isWildcard = env.to.host === NHP_WILDCARD
 
+    // Correlated replies resolve ctx.request() waiters; the envelope
+    // still flows through normal delivery below (mailbox + dispatch).
+    if (isSelf || isWildcard) this.resolvePending(env)
+
     // Local part
     let localOutcome: RouteOutcome | null = null
     if (isSelf || (isWildcard && source === 'local')) {
@@ -128,12 +141,12 @@ export class Kernel {
 
     if (isWildcard) {
       const remotes = await prisma.host.findMany({ where: { kind: 'remote' } })
-      const results: RouteOutcome[] = []
-      for (const h of remotes) {
-        const copy: NhpEnvelope = { ...env, to: { host: h.code, node: env.to.node } }
-        results.push(await this.forwardRemote(copy))
-      }
-      if (!results.length) return localOutcome ?? 'rejected'
+      if (!remotes.length) return localOutcome ?? 'rejected'
+      const results = await Promise.all(
+        remotes.map((h) =>
+          this.forwardRemote({ ...env, to: { host: h.code, node: env.to.node } }),
+        ),
+      )
       return results.includes('queued') ? 'queued' : 'forwarded'
     }
 
@@ -202,7 +215,7 @@ export class Kernel {
       return 'rejected'
     }
 
-    const res = await this.postAndTrack(host, env)
+    const res = await this.federation.postAndTrack(host, env)
 
     if (res.ok) {
       await recordOutbound(env, 'forwarded', { existingRowId })
@@ -225,7 +238,7 @@ export class Kernel {
   private async handleSys(env: NhpEnvelope): Promise<RouteOutcome> {
     if (env.type === NHP_SYS.HELLO) {
       const p = env.payload as HelloPayload
-      if (p?.host?.code) await this.mergeHello({ ...p, host: { ...p.host } })
+      if (p?.host?.code) await this.federation.mergeHello(p)
       return 'delivered'
     }
     // sys.ack / sys.error → into the target node's mailbox + admin socket
@@ -241,197 +254,38 @@ export class Kernel {
     return 'delivered'
   }
 
-  /** Merge a peer's hello payload into Host + NetDirectory. */
-  private async mergeHello(hello: HelloPayload) {
-    if (!hello?.host?.code) return
-    const h = hello.host
-    await prisma.host.upsert({
-      where: { code: h.code },
-      update: {
-        name: h.name,
-        ...(h.address ? { address: h.address } : {}),
-        ...(h.gwPort != null ? { gwPort: h.gwPort } : {}),
-        kind: 'remote',
-        status: 'online',
-        lastSeen: new Date(),
-      },
-      create: {
-        code: h.code,
-        name: h.name,
-        address: h.address ?? `unknown://${h.code}`,
-        gwPort: h.gwPort ?? null,
-        kind: 'remote',
-        status: 'online',
-        lastSeen: new Date(),
-      },
-    })
-    for (const n of hello.nodes ?? []) {
-      await prisma.netDirectory.upsert({
-        where: { hostCode_nodeCode: { hostCode: h.code, nodeCode: n.code } },
-        update: {
-          nodeName: n.name,
-          modules: JSON.stringify(n.modules ?? []),
-          adminOnline: !!n.adminOnline,
-          isDemo: !!n.isDemo,
-          demoToken: n.demoToken ?? null,
-          lastSeen: new Date(),
-        },
-        create: {
-          hostCode: h.code,
-          nodeCode: n.code,
-          nodeName: n.name,
-          modules: JSON.stringify(n.modules ?? []),
-          adminOnline: !!n.adminOnline,
-          isDemo: !!n.isDemo,
-          demoToken: n.demoToken ?? null,
-          lastSeen: new Date(),
-        },
-      })
-    }
-  }
-
   // ----------------------------------------------------------
-  // Federation loops
+  // Correlated request/response (ctx.request)
   // ----------------------------------------------------------
 
-  /**
-   * POST one envelope to a peer's ingress; on success merge the peer's
-   * hello and mark it online, on failure mark it unreachable.
-   * Shared by forwardRemote, heartbeatOnce and retryQueued — the single
-   * place where peer liveness is tracked.
-   */
-  private async postAndTrack(
-    host: PeerHost,
-    env: NhpEnvelope,
-  ): Promise<{ ok: boolean; error: string; hello?: HelloPayload }> {
-    const res = await this.postEnvelope(host.address, env)
-    if (res.ok) {
-      if (res.hello) await this.mergeHello(res.hello)
-      await prisma.host.update({
-        where: { id: host.id },
-        data: { status: 'online', lastSeen: new Date() },
-      })
-    } else {
-      await prisma.host
-        .update({ where: { id: host.id }, data: { status: 'unreachable' } })
-        .catch(() => {})
-    }
-    return res
+  /** Wake the waiter of the request this envelope replies to (if any). */
+  private resolvePending(env: NhpEnvelope) {
+    if (!env.replyTo) return
+    this.pending.get(env.replyTo)?.resolve(env)
   }
 
-  /** One heartbeat sweep: hello to every known remote host. */
-  async heartbeatOnce() {
-    const remotes = await prisma.host.findMany({ where: { kind: 'remote' } })
-    if (!remotes.length) return
-    const roster = await localRoster(this.adminOnline)
-    const hello = makeEnvelope<HelloPayload>({
-      type: NHP_SYS.HELLO,
-      module: 'sys',
-      from: { host: this.self.code, node: 'kernel' },
-      to: { host: '*', node: 'kernel' },
-      payload: {
-        host: {
-          code: this.self.code,
-          name: this.self.name,
-          gwPort: this.self.gwPort,
-          address: this.self.address,
+  private cancelReplyWaiter(envId: string) {
+    const w = this.pending.get(envId)
+    if (!w) return
+    clearTimeout(w.timer)
+    this.pending.delete(envId)
+  }
+
+  private awaitReply(envId: string, timeoutMs: number): Promise<NhpEnvelope> {
+    return new Promise<NhpEnvelope>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(envId)
+        reject(new Error(`no reply within ${timeoutMs}ms`))
+      }, timeoutMs)
+      this.pending.set(envId, {
+        resolve: (reply) => {
+          clearTimeout(timer)
+          this.pending.delete(envId)
+          resolve(reply)
         },
-        nodes: roster,
-      },
-    })
-
-    for (const h of remotes) {
-      const res = await this.postAndTrack(h, { ...hello, to: { host: h.code, node: 'kernel' } })
-      if (res.ok) {
-        if (h.status !== 'online') {
-          await log('info', 'host', `peer "${h.code}" is online`)
-        }
-      } else if (h.status !== 'unreachable') {
-        await log('warn', 'host', `peer "${h.code}" unreachable (temporary)`, {
-          error: res.error,
-        })
-      }
-    }
-  }
-
-  /** Store-and-forward drain: retry queued remote envelopes. */
-  private async retryQueued() {
-    // ONLY outbound forward-queue rows are retried. Inbound rows with
-    // status=queued are the admin mailbox (admin offline) — they simply wait.
-    const rows = await prisma.nhpMessage.findMany({
-      where: {
-        status: 'queued',
-        channel: 'remote',
-        direction: 'out',
-        attempts: { lt: MAX_SEND_ATTEMPTS },
-      },
-      take: RETRY_BATCH,
-    })
-    if (rows.length) {
-      console.log(`[retry] draining ${rows.length} queued envelope(s)`)
-    }
-    for (const row of rows) {
-      try {
-        const env = JSON.parse(row.envelope) as NhpEnvelope
-        if (!isValidEnvelope(env)) {
-          await markRowDead(row.id, 'corrupt envelope in queue')
-          continue
-        }
-        const host = await prisma.host.findUnique({ where: { code: env.to.host } })
-        if (!host) {
-          await markRowDead(row.id, 'host vanished from registry')
-          continue
-        }
-        const res = await this.postAndTrack(host, env)
-        if (res.ok) {
-          await markRowForwarded(row.id)
-          await log('info', 'router', `queued envelope ${row.envId} delivered after retry`)
-        } else {
-          const verdict = await bumpRowAttempt(
-            row.id,
-            row.attempts,
-            MAX_SEND_ATTEMPTS,
-            res.error,
-          )
-          if (verdict === 'dead') {
-            await log('error', 'router', `envelope ${row.envId} dead-lettered`, {
-              to: env.to,
-            })
-          }
-        }
-      } catch (err) {
-        await markRowDead(row.id, String(err))
-      }
-    }
-  }
-
-  private async postEnvelope(
-    address: string,
-    env: NhpEnvelope,
-  ): Promise<{ ok: boolean; error: string; hello?: HelloPayload }> {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), POST_TIMEOUT_MS)
-    try {
-      const res = await fetch(address, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(env),
-        signal: ctrl.signal,
+        timer,
       })
-      clearTimeout(timer)
-      const body = (await res.json().catch(() => ({}))) as {
-        ok?: boolean
-        hello?: HelloPayload
-        error?: string
-      }
-      if (!res.ok || body.ok === false) {
-        return { ok: false, error: body.error ?? `HTTP ${res.status}` }
-      }
-      return { ok: true, error: '', ...(body.hello ? { hello: body.hello } : {}) }
-    } catch (err) {
-      clearTimeout(timer)
-      return { ok: false, error: String(err).replace(/^Error:\s*/, '') }
-    }
+    })
   }
 
   // ----------------------------------------------------------
@@ -450,6 +304,32 @@ export class Kernel {
     return { envId: env.id, outcome }
   }
 
+  /**
+   * Send and await the correlated reply envelope (matched via replyTo).
+   * Used by INodeContext.request — the module-level RPC primitive.
+   */
+  async requestFromNode(
+    from: NhpAddress,
+    to: NhpAddress,
+    module: string,
+    type: string,
+    payload: unknown,
+    opts?: { timeoutMs?: number },
+  ): Promise<RequestResult> {
+    const env = makeEnvelope({ type, module, from, to, payload })
+    const wait = this.awaitReply(env.id, opts?.timeoutMs ?? REQUEST_TIMEOUT_MS)
+    const outcome = await this.route(env, 'module')
+    if (outcome === 'rejected') {
+      this.cancelReplyWaiter(env.id)
+      return { ok: false, error: 'request rejected by the local router' }
+    }
+    try {
+      return { ok: true, reply: await wait }
+    } catch (err) {
+      return { ok: false, error: String(err).replace(/^Error:\s*/, '') }
+    }
+  }
+
   async broadcastFromNode(
     from: NhpAddress,
     module: string,
@@ -463,31 +343,32 @@ export class Kernel {
         moduleStates: { some: { moduleId: module, enabled: true } },
       },
     })
-    let count = 0
-    for (const n of nodes) {
-      const env = makeEnvelope({
-        type,
-        module,
-        from,
-        to: { host: this.self.code, node: n.code },
-        payload,
-      })
-      const out = await this.route(env, 'module')
-      if (out !== 'rejected') count++
-    }
+    const localOutcomes = await Promise.all(
+      nodes.map(async (n) => {
+        const env = makeEnvelope({
+          type,
+          module,
+          from,
+          to: { host: this.self.code, node: n.code },
+          payload,
+        })
+        return this.route(env, 'module')
+      }),
+    )
     const remotes = await prisma.host.findMany({ where: { kind: 'remote' } })
-    for (const h of remotes) {
-      const env = makeEnvelope({
-        type,
-        module,
-        from,
-        to: { host: h.code, node: NHP_WILDCARD },
-        payload,
-      })
-      const out = await this.forwardRemote(env)
-      if (out !== 'rejected') count++
-    }
-    return count
+    const remoteOutcomes = await Promise.all(
+      remotes.map(async (h) => {
+        const env = makeEnvelope({
+          type,
+          module,
+          from,
+          to: { host: h.code, node: NHP_WILDCARD },
+          payload,
+        })
+        return this.forwardRemote(env)
+      }),
+    )
+    return [...localOutcomes, ...remoteOutcomes].filter((o) => o !== 'rejected').length
   }
 
   async getDirectory(): Promise<IDirectoryEntry[]> {

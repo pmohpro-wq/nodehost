@@ -57,3 +57,6 @@ server.log
 .zscripts
 .zshots
 *.pid
+db/fed-*.db
+db/smoke-*.db
+.zscripts/

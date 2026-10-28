@@ -148,6 +148,15 @@ export class ModuleRuntime {
           type,
           payload,
         ),
+      request: (to, module, type, payload, opts) =>
+        kernel.requestFromNode(
+          { host: node.hostCode, node: node.code },
+          to,
+          module,
+          type,
+          payload,
+          opts,
+        ),
       broadcast: (module, type, payload) =>
         kernel.broadcastFromNode({ host: node.hostCode, node: node.code }, module, type, payload),
       directory: () => kernel.getDirectory(),
