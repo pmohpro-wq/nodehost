@@ -164,7 +164,32 @@ export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
     })
   }
 
-  // 4) Demo content per profile
+  // 3.5) Production hygiene — when NO demo profile is requested, this instance
+  // must be exactly ONE real NodeHost: wipe any legacy simulation leftovers
+  // (demo nodes with well-known tokens, remote host rows that point at
+  // localhost — artifacts of a local multi-kernel setup). Remote hosts added
+  // by the admin for REAL federation (other servers) have non-local addresses
+  // and are never touched.
+  if (!ENV.seedProfile) {
+    await prisma.node.deleteMany({
+      where: { isDemo: true, token: { startsWith: 'demo-token-' } },
+    })
+    // Federation is between REAL servers: any remote host row pointing at
+    // localhost is a leftover of a local multi-kernel simulation, never a
+    // legitimate peer in the one-NodeHost-per-server deployment model.
+    await prisma.host.deleteMany({
+      where: {
+        kind: 'remote',
+        OR: [
+          { address: { contains: '127.0.0.1' } },
+          { address: { contains: 'localhost' } },
+        ],
+      },
+    })
+  }
+
+  // 4) Demo content per profile — OPT-IN ONLY (SEED_PROFILE=alfa|beta).
+  // Production starts with an empty SEED_PROFILE: no demo nodes, no fake peers.
   if (ENV.seedProfile === 'alfa') {
     await upsertDemoNode({
       code: 'node-a1',
