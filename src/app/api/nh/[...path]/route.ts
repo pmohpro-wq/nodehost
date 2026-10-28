@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getMaxNodes, getSessionUser } from '@/lib/auth'
+import { getSessionUser } from '@/lib/auth'
 import { canManageNode, sanitizeBootstrap, type RawBootstrap } from '@/lib/tenant'
 
 /**
@@ -95,14 +95,11 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   // ------------------------------------------------------------
   if (!viewer) return unauthorized()
 
-  // POST nodes → quota check + stamp ownership, then kernel create.
+  // POST nodes → ONE node per user (their personal server), then kernel create.
   if (method === 'POST' && joined === 'nodes') {
-    const used = await db.node.count({ where: { isDemo: false } })
-    const maxNodes = await getMaxNodes()
-    if (used >= maxNodes)
-      return forbidden(
-        `سقف نودهای این میزبان پر است (${used}/${maxNodes}) — ادمین می‌تواند سقف را افزایش دهد`,
-      )
+    const mine = await db.node.count({ where: { ownerId: viewer.id, isDemo: false } })
+    if (mine >= 1)
+      return forbidden('هر کاربر فقط یک نود دارد — نود شخصی شما از قبل ساخته شده است')
     let body: Record<string, unknown> = {}
     try {
       body = (await req.json()) as Record<string, unknown>
@@ -117,6 +114,15 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const toggle = joined.match(/^nodes\/([^/]+)\/modules$/)
   if (method === 'POST' && toggle) {
     const node = await db.node.findUnique({ where: { id: toggle[1] } })
+    if (!node) return json({ ok: false, error: 'نود یافت نشد' }, 404)
+    if (!canManageNode(viewer, node)) return forbidden('این نود متعلق به شما نیست')
+    return passthrough(req, joined, search)
+  }
+
+  // POST nodes/<id>/send → owner or admin (module test from the simple UI).
+  const send = joined.match(/^nodes\/([^/]+)\/send$/)
+  if (method === 'POST' && send) {
+    const node = await db.node.findUnique({ where: { id: send[1] } })
     if (!node) return json({ ok: false, error: 'نود یافت نشد' }, 404)
     if (!canManageNode(viewer, node)) return forbidden('این نود متعلق به شما نیست')
     return passthrough(req, joined, search)

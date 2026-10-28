@@ -7,9 +7,9 @@
  * to stay readable, explicit enough to stay auditable.
  */
 import type { Kernel } from './kernel'
-import { isValidEnvelope, NHP_SYS } from '../../src/core/nodehost/protocol'
+import { isValidEnvelope, makeEnvelope, NHP_SYS } from '../../src/core/nodehost/protocol'
 import { verifyIngressAuth } from './federation'
-import { listMailbox } from './mailbox'
+import { listMailbox, markRowDelivered } from './mailbox'
 import { log, newAdminToken, newNodeCode, prisma } from './store'
 
 const json = (data: unknown, status = 200) =>
@@ -94,6 +94,31 @@ async function handleBootstrap(kernel: Kernel): Promise<Response> {
     },
     logs,
   })
+}
+
+/**
+ * POST /internal/nodes/:code/send — trusted-internal test send.
+ * The web proxy enforces ownership; the kernel just delivers a LOCAL
+ * node→node envelope. This exists so the simplified UI can exercise a
+ * node's modules over plain REST — no browser socket needed.
+ */
+async function sendFromNode(req: Request, kernel: Kernel, ref: string): Promise<Response> {
+  const body = await readBody<{ module?: string; type?: string; payload?: unknown }>(req)
+  const node = await prisma.node.findFirst({
+    where: { OR: [{ id: ref }, { code: ref }] },
+    include: { host: true },
+  })
+  if (!node) return json({ ok: false, error: 'node not found' }, 404)
+  const moduleId = String(body.module ?? '').trim()
+  const type = String(body.type ?? '').trim()
+  if (!moduleId || !type) return json({ ok: false, error: 'module and type are required' }, 422)
+  const addr = { host: node.host.code, node: node.code }
+  const env = makeEnvelope({ from: addr, to: addr, module: moduleId, type, payload: body.payload ?? {} })
+  const outcome = await kernel.route(env, 'local')
+  // The loopback send reached the node's mailbox + module regardless of a
+  // live admin socket — reflect that in the node's history.
+  await markRowDelivered(env.id, node.code)
+  return json({ ok: true, outcome, envId: env.id })
 }
 
 async function createNode(req: Request, kernel: Kernel): Promise<Response> {
@@ -203,6 +228,11 @@ export async function handleApi(req: Request, kernel: Kernel): Promise<Response>
   const nodeToggle = path.match(/^\/internal\/nodes\/([^/]+)\/modules$/)
   if (nodeToggle && req.method === 'POST') {
     return toggleNodeModule(req, kernel, nodeToggle[1])
+  }
+
+  const nodeSend = path.match(/^\/internal\/nodes\/([^/]+)\/send$/)
+  if (nodeSend && req.method === 'POST') {
+    return sendFromNode(req, kernel, nodeSend[1])
   }
 
   const nodeDelete = path.match(/^\/internal\/nodes\/([^/]+)$/)

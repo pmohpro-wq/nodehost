@@ -1,41 +1,21 @@
 'use client'
 
+/** Header — brand, host chip, user chip, logout, theme. No tabs anymore. */
 import { useNh } from './store'
 import { StatusDot } from './bits'
 import { Button } from '@/components/ui/button'
 import { useTheme } from 'next-themes'
-import {
-  Moon,
-  Sun,
-  Network,
-  Monitor,
-  Boxes,
-  TerminalSquare,
-  Globe2,
-  BookOpenText,
-  ShieldCheck,
-  LogOut,
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
-
-const BASE_TABS = [
-  { id: 'dashboard', label: 'داشبورد', icon: Monitor },
-  { id: 'nodes', label: 'نودها', icon: Boxes },
-  { id: 'console', label: 'کنسول ادمین', icon: TerminalSquare },
-  { id: 'network', label: 'شبکه', icon: Globe2 },
-  { id: 'protocol', label: 'پروتکل', icon: BookOpenText },
-]
+import { Moon, Sun, Network, LogOut } from 'lucide-react'
 
 export function Header() {
-  const { data, me, tab, setTab, session, logout } = useNh()
+  const { data, me, logout } = useNh()
   const { resolvedTheme, setTheme } = useTheme()
 
   const host = data?.host
-  const tabs = me?.role === 'admin' ? [...BASE_TABS, { id: 'admin', label: 'ادمین سیستم', icon: ShieldCheck }] : BASE_TABS
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
-      <div className="mx-auto max-w-6xl px-4">
+      <div className="mx-auto max-w-3xl px-4">
         <div className="flex h-14 items-center gap-3">
           {/* Brand */}
           <div className="flex items-center gap-2.5">
@@ -45,7 +25,7 @@ export function Header() {
             <div className="leading-tight">
               <div className="font-extrabold text-[15px]">نودهاست</div>
               <div className="text-[10px] text-muted-foreground hidden sm:block">
-                معماری فدرال نودها — NHP v1
+                سرور شخصی شما
               </div>
             </div>
           </div>
@@ -53,7 +33,7 @@ export function Header() {
           {/* Host identity chip */}
           {host && (
             <div className="hidden md:flex items-center gap-2 rounded-full border px-3 py-1 text-xs mr-2">
-              <StatusDot tone={host.status === 'online' ? 'green' : 'amber'} pulse />
+              <StatusDot tone="green" pulse />
               <span className="font-medium">{host.name}</span>
               <span className="text-muted-foreground ltr-block" dir="ltr">
                 {host.code}
@@ -67,13 +47,9 @@ export function Header() {
           {me && (
             <div className="hidden sm:flex items-center gap-2 rounded-full border px-3 py-1 text-[11px]">
               <span className="font-medium">{me.name}</span>
-              {me.role === 'admin' ? (
-                <span className="flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2 py-0.5">
-                  <ShieldCheck className="size-3" /> ادمین
-                </span>
-              ) : (
-                <span className="text-muted-foreground">کاربر</span>
-              )}
+              <span className="text-muted-foreground">
+                {me.role === 'admin' ? 'ادمین' : 'کاربر'}
+              </span>
             </div>
           )}
 
@@ -91,14 +67,6 @@ export function Header() {
             </Button>
           )}
 
-          {/* Console session indicator */}
-          {session && (
-            <div className="hidden lg:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-700 dark:text-emerald-400">
-              <StatusDot tone="green" pulse />
-              ادمینِ <span className="font-medium ltr-block" dir="ltr">{session.nodeCode}</span>
-            </div>
-          )}
-
           {/* Theme toggle (CSS-only swap — no hydration mismatch) */}
           <Button
             variant="ghost"
@@ -111,26 +79,6 @@ export function Header() {
             <Moon className="size-4.5 dark:hidden" />
           </Button>
         </div>
-
-        {/* Tabs */}
-        <nav aria-label="بخش‌ها" className="flex gap-1 overflow-x-auto nh-scroll pb-1.5">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              aria-current={tab === t.id ? 'page' : undefined}
-              className={cn(
-                'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium whitespace-nowrap transition-colors',
-                tab === t.id
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              <t.icon className="size-4" />
-              {t.label}
-            </button>
-          ))}
-        </nav>
       </div>
     </header>
   )

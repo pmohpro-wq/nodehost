@@ -2,24 +2,6 @@
 
 import type { NhpAddress } from '@/core/nodehost/protocol'
 
-/** Outgoing NHP send request from an admin console panel. */
-export interface SendRequest {
-  to: NhpAddress
-  module: string
-  type: string
-  payload: unknown
-}
-
-/** Receipt returned by the kernel's nhp:send ack. */
-export interface SendResult {
-  ok: boolean
-  outcome: string
-  envId: string
-}
-
-/** Shared send callback — ONE implementation lives in the console socket context. */
-export type SendFn = (p: SendRequest, cb?: (r: SendResult) => void) => void
-
 export interface HostDto {
   id: string
   code: string
@@ -157,16 +139,6 @@ export interface AdminUserDto {
   status: 'active' | 'suspended'
   createdAt: string
   nodeCount: number
-}
-
-/** Console session — an admin bound to exactly ONE node. */
-export interface ConsoleSession {
-  hostCode: string
-  hostName: string
-  gwPort: number | null
-  nodeCode: string
-  nodeName: string
-  token: string
 }
 
 export const STATUS_FA: Record<string, string> = {

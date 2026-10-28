@@ -99,6 +99,19 @@ export async function markRowForwarded(rowId: string) {
   })
 }
 
+/**
+ * Loopback test sends (REST /internal/nodes/:code/send) reach the node's
+ * mailbox and dispatch to its module regardless of a live admin socket —
+ * flip the row's status so the node's history reflects that reality
+ * instead of waiting forever in the queued state.
+ */
+export async function markRowDelivered(envId: string, toNode: string) {
+  await prisma.nhpMessage.updateMany({
+    where: { envId, toNode, status: 'queued' },
+    data: { status: 'delivered', deliveredAt: new Date() },
+  })
+}
+
 /** A retry row is corrupt / its host vanished — stop trying. */
 export async function markRowDead(rowId: string, error: string) {
   await prisma.nhpMessage

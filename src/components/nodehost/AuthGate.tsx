@@ -21,6 +21,7 @@ import type { ViewerInfo } from './types'
 interface AuthOk {
   ok: boolean
   user: ViewerInfo
+  nodeCreated?: boolean
 }
 
 export function AuthGate() {
@@ -68,8 +69,10 @@ export function AuthGate() {
       })
       await done(
         res.user.role === 'admin'
-          ? 'ثبت‌نام شدید — شما ادمین این نمونه هستید'
-          : 'ثبت‌نام انجام شد؛ خوش آمدید',
+          ? 'ثبت‌نام شدید — شما ادمین این نودهاست هستید'
+          : res.nodeCreated === false
+            ? 'ثبت‌نام انجام شد — نود شما را می‌توانید از پنل بسازید'
+            : 'خوش آمدید — نود شخصی شما آماده است',
       )
     } catch (err) {
       toast({ title: 'ثبت‌نام ناموفق بود', description: String(err), variant: 'destructive' })
@@ -89,8 +92,8 @@ export function AuthGate() {
             </div>
             <h1 className="text-2xl font-extrabold">نودهاست</h1>
             <p className="text-sm text-muted-foreground leading-6">
-              ثبت‌نام کنید، نود خودتان را بسازید، ماژول‌های دلخواه را فعال کنید و روی شبکهٔ فدرال
-              کار کنید.
+              با ثبت‌نام، <span className="font-medium text-foreground">نود شخصی شما خودکار ساخته می‌شود</span>{" "}
+              — همان سرور اشتراکیِ خودتان — و چند ماژول تستی خواهد داشت که هر لحظه فعال یا غیرفعالشان می‌کنید.
             </p>
           </div>
 

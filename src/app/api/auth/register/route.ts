@@ -36,8 +36,26 @@ export async function POST(req: NextRequest) {
   })
   await startSession(user.id)
 
+  // The user's personal node IS their account's server — create it right away.
+  // Kernel being down must not block sign-up: the UI offers a one-click
+  // "create my node" fallback in that case.
+  let nodeCreated = false
+  try {
+    const kernelApi = process.env.NH_KERNEL_API ?? 'http://127.0.0.1:3013'
+    const res = await fetch(`${kernelApi}/internal/nodes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: `نود ${name}`, ownerId: user.id }),
+      cache: 'no-store',
+    })
+    nodeCreated = res.ok
+  } catch {
+    nodeCreated = false
+  }
+
   return NextResponse.json({
     ok: true,
     user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    nodeCreated,
   })
 }
