@@ -22,6 +22,17 @@ code()  { curl -s -o /dev/null -w "%{http_code}" "$@"; }
 json()  { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$2"; }
 
 echo "== 0) fresh tenant state (dev-only pre-clean) =="
+# SAFETY GATE — this suite WIPES every real account and node of the
+# LIVE instance db. It must never run against a db that holds real data
+# unless the operator says so out loud:
+#     SMOKE_ALLOW_WIPE=1 bash tests/smoke-multitenant.sh
+if [ "${SMOKE_ALLOW_WIPE:-0}" != "1" ]; then
+  echo "REFUSING to wipe the live db (users/nodes would be destroyed)."
+  echo "This suite is for a throwaway/dev instance only."
+  echo "Run explicitly with: SMOKE_ALLOW_WIPE=1 bash tests/smoke-multitenant.sh"
+  exit 1
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DB_URL="file:$ROOT/db/host-alfa.db"
 bun -e "

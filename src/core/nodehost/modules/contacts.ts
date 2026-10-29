@@ -8,14 +8,18 @@
  *     hard-bounded.
  *
  * Scale axioms (this is the module's whole design):
- *  1. ZERO protocol traffic — add/read/remove never leaves this host.
+ *  1. NEAR-ZERO protocol traffic — add/read/remove never leaves this host
+ *     for LOCAL peers. The single exception is the add-time existence
+ *     check for REMOTE peers (one roster lookup on the kernel, no wire
+ *     message of our own — the roster arrives via hello/gossip anyway).
  *     No gossip, no replication, no sync, no notification. A billion
  *     users keep a billion private books at zero network cost; the only
  *     stored state is O(contacts) per node with a hard cap.
- *  2. Address-first, presence-second — you may save `user@host` for a
- *     host this kernel has NEVER heard of (the phone-book model).
- *     Resolution happens at SEND time via NHP routing + well-known
- *     discovery, never at save time.
+ *  2. REAL people only — the kernel verifies the peer exists BEFORE the
+ *     row is created: local peers against the node table, remote peers
+ *     against the learned roster of an INTRODUCED host. You cannot save
+ *     a user that does not exist (the phone-book fantasy of saving
+ *     never-heard-of addresses is what filled books with dead rows).
  *  3. Presence is COMPUTED at read time from the kernel directory — one
  *     pass, one Map lookup per contact — and never stored, so it can
  *     never go stale.
@@ -106,9 +110,9 @@ const pub = (c: Contact) => ({
 export default defineModule({
   id: 'contacts',
   name: 'مخاطبین / Contacts',
-  version: '1.0.0',
+  version: '1.1.0',
   description:
-    'دفترچهٔ مخاطبین شخصی هر نود — ذخیرهٔ دائمی آدرس کاربران (حتی سرورهایی که هنوز به شبکه نیامده‌اند)، نام مستعار، یادداشت، نشانک و حضور زنده از دفترچهٔ شبکه؛ صفر ترافیک شبکه',
+    'دفترچهٔ مخاطبین شخصی هر نود — فقط کاربران واقعی: افزودن پیش از ذخیره در کرنل راستی‌آزمایی می‌شود (محلی: جدول نودها، دوردست: رُستر میزبانِ معرفی‌شده)؛ نام مستعار، یادداشت، نشانک و حضور زنده؛ صفر ترافیک شبکه برای مخاطب محلی',
   author: 'core',
 
   // The address book has no wire behavior by design. Direct envelopes to
@@ -206,6 +210,33 @@ export default defineModule({
             error: `دفترچهٔ شما پر است (سقف ${CONTACTS_KEEP} مخاطب) — چند مخاطب کم‌استفاده را حذف کنید`,
           },
         }
+
+      // REAL people only — the kernel answers from authoritative state
+      // (local node table / learned remote roster). Editing an EXISTING
+      // row (the upsert branch above) stays validation-free on purpose:
+      // a saved contact must remain editable even if its peer is
+      // temporarily absent (suspended account, offline remote host).
+      const resolution = await ctx.resolvePeer(peer.host, peer.node)
+      if (resolution.status === 'unknown-host')
+        return {
+          status: 422,
+          json: {
+            ok: false,
+            error: `سرور «${peer.host}» شناخته‌شده نیست — ابتدا آن را از کارت «معرفی نودهاست به نودهاست» معرفی کنید`,
+          },
+        }
+      if (resolution.status === 'missing') {
+        const isLocal = peer.host === ctx.node.hostCode
+        return {
+          status: 422,
+          json: {
+            ok: false,
+            error: isLocal
+              ? `کاربری با آیدی «${peer.node}» در این نودهاست وجود ندارد`
+              : `کاربر «${peer.node}» روی سرور «${peer.host}» پیدا نشد`,
+          },
+        }
+      }
 
       const c: Contact = {
         host: peer.host,

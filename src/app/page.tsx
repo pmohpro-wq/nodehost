@@ -13,6 +13,7 @@ import { MyNode } from '@/components/nodehost/MyNode'
 import { IntroduceHost } from '@/components/nodehost/IntroduceHost'
 import { HostIdentity } from '@/components/nodehost/HostIdentity'
 import { AdminUsers } from '@/components/nodehost/AdminUsers'
+import { AdminNodes } from '@/components/nodehost/AdminNodes'
 import { UI_POLL_MS, useNh } from '@/components/nodehost/store'
 import { Network } from 'lucide-react'
 
@@ -49,6 +50,7 @@ export default function Home() {
         <IntroduceHost />
         {me.role === 'admin' && <HostIdentity />}
         {me.role === 'admin' && <AdminUsers />}
+        {me.role === 'admin' && <AdminNodes />}
       </main>
 
       <footer className="mt-auto border-t">

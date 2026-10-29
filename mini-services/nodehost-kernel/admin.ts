@@ -293,14 +293,46 @@ async function toggleNodeModule(req: Request, kernel: Kernel, ref: string): Prom
   return json({ ok: true })
 }
 
+/**
+ * DELETE /internal/nodes/:ref — remove a node and everything it owns.
+ *
+ * Cascade (the node IS the account's server — leaving the web account
+ * behind would create a login-with-nothing zombie):
+ *  1. Node row — Prisma cascades NodeModuleState + ModuleStorage.
+ *  2. Its mailbox history (NhpMessage rows to/from its code) — otherwise
+ *     queued deliveries retry forever against a node that no longer exists.
+ *  3. The owner's web account (User row) — ONLY when this was their last
+ *     node (quota is one, but stay safe); their tab session dies on the
+ *     very next request (the header fails resolution). The freed id can
+ *     register again fresh.
+ *
+ * The web proxy decides WHO may call this (admin-only, never one's own
+ * node) — the kernel stays the trusted-internal executor.
+ */
 async function deleteNode(kernel: Kernel, ref: string): Promise<Response> {
   const node = await prisma.node.findFirst({ where: { OR: [{ id: ref }, { code: ref }] } })
-  if (node) {
-    await prisma.node.delete({ where: { id: node.id } })
-    await kernel.runtime.syncAll()
-    await log('info', 'kernel', `node "${node.code}" deleted`)
+  if (!node) return json({ ok: false, error: 'node not found' }, 404)
+
+  await prisma.node.delete({ where: { id: node.id } })
+  await prisma.nhpMessage.deleteMany({
+    where: { OR: [{ fromNode: node.code }, { toNode: node.code }] },
+  })
+
+  let accountRemoved: string | null = null
+  if (node.ownerId) {
+    const remaining = await prisma.node.count({ where: { ownerId: node.ownerId } })
+    if (remaining === 0) {
+      const owner = await prisma.user.findUnique({ where: { id: node.ownerId } })
+      if (owner) {
+        await prisma.user.delete({ where: { id: owner.id } })
+        accountRemoved = owner.name
+      }
+    }
   }
-  return json({ ok: true })
+
+  await kernel.runtime.syncAll()
+  await log('info', 'kernel', `node "${node.code}" deleted${accountRemoved ? ` (account "${accountRemoved}" removed with it)` : ''}`)
+  return json({ ok: true, deleted: node.code, ...(accountRemoved ? { accountRemoved } : {}) })
 }
 
 /**
@@ -344,13 +376,18 @@ async function addHost(req: Request, kernel: Kernel): Promise<Response> {
   return json({ ok: true, host })
 }
 
-async function deleteHost(hostId: string): Promise<Response> {
-  const host = await prisma.host.findUnique({ where: { id: hostId } })
+async function deleteHost(ref: string): Promise<Response> {
+  // Accept BOTH the row id and the routing code — callers (proxy, tests)
+  // naturally speak codes; a code-only lookup that silently no-ops was a
+  // booby trap ("ok:true" while nothing was deleted).
+  const host = await prisma.host.findFirst({ where: { OR: [{ id: ref }, { code: ref }] } })
   if (host) {
     if (host.kind === 'local') return json({ ok: false, error: 'میزبان محلی حذف نمی‌شود' }, 422)
     await prisma.host.delete({ where: { id: host.id } })
     await prisma.netDirectory.deleteMany({ where: { hostCode: host.code } })
     await log('info', 'kernel', `remote host "${host.code}" removed`)
+  } else {
+    return json({ ok: false, error: 'host not found' }, 404)
   }
   return json({ ok: true })
 }

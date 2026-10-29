@@ -69,6 +69,16 @@ export interface IRequestResult {
 }
 
 /**
+ * Does the peer (host, node) ACTUALLY exist right now?
+ * The kernel answers from authoritative state — the local node table for
+ * this host, the learned remote roster (hello/gossip) for known peers.
+ */
+export type PeerResolution =
+  | { status: 'verified'; /** local = this kernel's node table, roster = learned remote roster */ how: 'local' | 'roster' }
+  | { status: 'unknown-host' }
+  | { status: 'missing' }
+
+/**
  * Everything a module may touch. This is the sandbox wall:
  * no DB handles, no sockets, no globals — only this context.
  */
@@ -99,6 +109,14 @@ export interface INodeContext {
   broadcast(module: string, type: string, payload: unknown): Promise<number>
   /** Query the live network directory (local nodes + learned rosters). */
   directory(): Promise<IDirectoryEntry[]>
+  /**
+   * Authoritative existence check for a peer address (host, node).
+   * Local peers resolve against the kernel's node table (includes dormant
+   * nodes); remote peers against the learned roster of a KNOWN host —
+   * an unintroduced host is `unknown-host`, a known host without that
+   * node in its roster is `missing`.
+   */
+  resolvePeer(host: string, node: string): Promise<PeerResolution>
 }
 
 /**

@@ -78,7 +78,8 @@ BX=$(curl -s -m 5 "$WEB/api/nh/bootstrap" -H "x-nh-user: ghost_who_never_was_$TS
 echo "== chat: two tab-identities talking through the kernel =="
 curl -s -m 5 -X POST "$WEB/api/nh/nodes/$N1/modules" -H "$H1" -H 'content-type: application/json' -d '{"moduleId":"chat","enabled":true}' >/dev/null
 curl -s -m 5 -X POST "$WEB/api/nh/nodes/$N2/modules" -H "$H2" -H 'content-type: application/json' -d '{"moduleId":"chat","enabled":true}' >/dev/null
-S=$(curl -s -m 5 -X POST "$WEB/api/nh/nodes/$N1/apps/chat/send" -H "$H1" -H 'content-type: application/json' -d "{\"to\":{\"host\":\"alfa\",\"node\":\"$U2\"},\"text\":\"سلام از تب $U1\"}")
+HOST_CODE=$(curl -s -m 5 "$WEB/api/nh/bootstrap" -H "$H1" | python3 -c "import json,sys; print(json.load(sys.stdin)['host']['code'])")
+S=$(curl -s -m 5 -X POST "$WEB/api/nh/nodes/$N1/apps/chat/send" -H "$H1" -H 'content-type: application/json' -d "{\"to\":{\"host\":\"$HOST_CODE\",\"node\":\"$U2\"},\"text\":\"سلام از تب $U1\"}")
 [ "$(echo "$S" | json -c "d['ok']")" = "True" ] && ok "send $U1 → $U2 ok" || bad "send failed: $S"
 sleep 1
 C2=$(curl -s -m 5 "$WEB/api/nh/nodes/$N2/apps/chat/conversations" -H "$H2")

@@ -24,7 +24,11 @@ import {
   type NhpEnvelope,
   type RouteOutcome,
 } from '../../src/core/nodehost/protocol'
-import type { IDirectoryEntry, ModuleRegistration } from '../../src/core/nodehost/interfaces'
+import type {
+  IDirectoryEntry,
+  ModuleRegistration,
+  PeerResolution,
+} from '../../src/core/nodehost/interfaces'
 import { bindAdminSocket as bindAdminSocketHandlers, adminRoom } from './adminSocket'
 import {
   DIR_SWEEP_MS,
@@ -397,6 +401,39 @@ export class Kernel {
       }),
     )
     return [...localOutcomes, ...remoteOutcomes].filter((o) => o !== 'rejected').length
+  }
+
+  /**
+   * Authoritative existence check for a peer address — the service behind
+   * ctx.resolvePeer. Two trusted sources, one per scope:
+   *  - LOCAL host  → the node table itself (every registered node, also
+   *    dormant ones with no module enabled — the account registry).
+   *  - REMOTE host → the host must be KNOWN (introduced/resolved), and the
+   *    node must appear in that host's learned roster (hello/gossip keeps
+   *    it fresh — the roster only carries nodes with ≥1 enabled module,
+   *    which is exactly the set of reachable peers).
+   */
+  async resolvePeer(hostCode: string, nodeCode: string): Promise<PeerResolution> {
+    const host = String(hostCode ?? '').trim()
+    const node = String(nodeCode ?? '').trim()
+    if (!host || !node) return { status: 'missing' }
+
+    if (host === this.self.code) {
+      const local = await prisma.node.findFirst({
+        where: { code: node, status: 'active', host: { kind: 'local' } },
+        select: { id: true },
+      })
+      return local ? { status: 'verified', how: 'local' } : { status: 'missing' }
+    }
+
+    const known = await prisma.host.findUnique({ where: { code: host } })
+    if (!known || known.address.startsWith('unknown://')) return { status: 'unknown-host' }
+
+    const row = await prisma.netDirectory.findUnique({
+      where: { hostCode_nodeCode: { hostCode: host, nodeCode: node } },
+      select: { id: true },
+    })
+    return row ? { status: 'verified', how: 'roster' } : { status: 'missing' }
   }
 
   async getDirectory(): Promise<IDirectoryEntry[]> {

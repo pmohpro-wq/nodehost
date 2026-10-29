@@ -15,6 +15,7 @@ import type {
   ModuleApiRequest,
   ModuleApiResponse,
   ModuleRegistration,
+  PeerResolution,
 } from '../../src/core/nodehost/interfaces'
 import type { NhpEnvelope } from '../../src/core/nodehost/protocol'
 import type { Kernel } from './kernel'
@@ -206,6 +207,7 @@ export class ModuleRuntime {
       broadcast: (module, type, payload) =>
         kernel.broadcastFromNode({ host: node.hostCode, node: node.code }, module, type, payload),
       directory: () => kernel.getDirectory(),
+      resolvePeer: (host, node): Promise<PeerResolution> => kernel.resolvePeer(host, node),
     }
   }
 

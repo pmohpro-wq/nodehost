@@ -150,12 +150,18 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     return passthrough(req, joined, search)
   }
 
-  // DELETE nodes/<id> → owner or admin (demo nodes: admin only).
+  // DELETE nodes/<id> → ADMIN ONLY, never one's own node. Deleting a node
+  // removes the account behind it too (the kernel cascades), so this is a
+  // pure admin power: "مدیر باید بتواند یک نود را حذف کند". An admin
+  // deleting their own node would lock the instance out; a user deleting
+  // their own node (and account) is a separate, deliberately-unbuilt flow.
   const nodeDel = joined.match(/^nodes\/([^/]+)$/)
   if (method === 'DELETE' && nodeDel) {
+    if (viewer.role !== 'admin') return forbidden('حذف نود فقط برای ادمین')
     const node = await db.node.findUnique({ where: { id: nodeDel[1] } })
     if (!node) return json({ ok: false, error: 'نود یافت نشد' }, 404)
-    if (!canManageNode(viewer, node)) return forbidden('این نود متعلق به شما نیست')
+    if (node.ownerId && node.ownerId === viewer.id)
+      return json({ ok: false, error: 'حذف نود خودتان مجاز نیست — حساب ادمین در خطر می‌افتد' }, 422)
     return passthrough(req, joined, search)
   }
 
