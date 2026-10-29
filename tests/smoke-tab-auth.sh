@@ -22,8 +22,9 @@ enc()  { python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[
 json() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$2"; }
 
 TS=$(date +%s)
-U1="سارا_$TS"          # Persian name → exercises header URL-encoding
-U2="بسام_$TS"
+U1="sara$TS"           # NEW ids are English-only lowercase+digits (identity law — no '_')
+U2="basam$TS"
+LEGACY="میلی"          # legacy holder: Persian login must keep working + header URL-encoding
 H1="x-nh-user: $(enc "$U1")"
 H2="x-nh-user: $(enc "$U2")"
 
@@ -42,6 +43,16 @@ R=$(curl -s -m 5 -X POST "$WEB/api/auth/enter" -H 'content-type: application/jso
 
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 5 -X POST "$WEB/api/auth/enter" -H 'content-type: application/json' -d '{"name":"a|b"}')
 [ "$CODE" = "422" ] && ok "name with '|' rejected (422)" || bad "expected 422 for a|b, got $CODE"
+
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 5 -X POST "$WEB/api/auth/enter" -H 'content-type: application/json' -d "{\"name\":\"فارسی_$TS\"}")
+[ "$CODE" = "422" ] && ok "new Persian id rejected — English law (422)" || bad "expected 422 for Persian new id, got $CODE"
+
+R=$(curl -s -m 5 -X POST "$WEB/api/auth/enter" -H 'content-type: application/json' -d "{\"name\":\"$LEGACY\"}")
+[ "$(echo "$R" | json -c "d['ok']")" = "True" ] && ok "legacy Persian login works (exact match)" || bad "legacy login failed: $R"
+
+HL="x-nh-user: $(enc "$LEGACY")"
+BL=$(curl -s -m 5 "$WEB/api/nh/bootstrap" -H "$HL")
+[ "$(echo "$BL" | json -c "d['viewer']['name']")" = "$LEGACY" ] && ok "URL-encoded Persian header → viewer" || bad "legacy viewer mismatch: $BL"
 
 U2R=$(curl -s -m 5 -X POST "$WEB/api/auth/enter" -H 'content-type: application/json' -d "{\"name\":\"$U2\"}")
 [ "$(echo "$U2R" | json -c "d['ok']")" = "True" ] && ok "enter $U2 → ok" || bad "enter $U2 failed: $U2R"
