@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { needsFirstAdmin } from '@/lib/auth'
+import { resolveIdGate } from '@/lib/identity'
 
 /**
  * POST /api/auth/enter — the ONE door of the passwordless era.
@@ -13,13 +14,17 @@ import { needsFirstAdmin } from '@/lib/auth'
  *                        registrant of a fresh instance becomes admin).
  *   - name already exists → the account opens for that name.
  *
+ * The ONE identity law lives in src/lib/identity.ts and this door is its
+ * main consumer:
+ *   - EXISTING names log in EXACTLY as they are (legacy Persian ids keep
+ *     working — the ladder never breaks an existing holder);
+ *   - NEW ids must pass the full ladder: shape → exact/case-alias →
+ *     English-only law (`[a-z][a-z0-9]*`). New ids travel in URLs,
+ *     headers and NHP addresses, so they must be ASCII-safe.
+ *
  * No cookie is issued: the TAB keeps the session (sessionStorage + ?u=
  * in the address bar) and presents it as the `x-nh-user` header on every
  * call — which is what makes two tabs two independent users.
- *
- * Trade-off (deliberate, documented): without passwords anyone who knows
- * the name can open the account. Fine for testing-first deployments; a
- * real credential layer can be added later without changing the wire.
  */
 export async function POST(req: NextRequest) {
   let body: { name?: string }
@@ -43,7 +48,8 @@ export async function POST(req: NextRequest) {
       { status: 422 },
     )
 
-  // Existing name → plain login.
+  // Existing name → plain login. Exact match first: legacy holders (any
+  // alphabet) keep their id forever.
   const existing = await db.user.findUnique({ where: { name } })
   if (existing) {
     if (existing.status !== 'active')
@@ -55,9 +61,20 @@ export async function POST(req: NextRequest) {
     })
   }
 
+  // New id → the full ladder. The case-alias leg is a case-insensitive
+  // scan (SQLite lower() is ASCII-scoped — exactly the alphabet new ids
+  // live in; Persian names can never collide with an English id anyway).
+  const alias = await db.$queryRawUnsafe<{ name: string }[]>(
+    'SELECT name FROM User WHERE lower(name) = ? LIMIT 1',
+    name.toLowerCase(),
+  )
+  const gate = resolveIdGate(name, false, alias.length > 0)
+  if (!gate.ok)
+    return NextResponse.json({ ok: false, error: gate.error }, { status: gate.status })
+
   // New name → register. The FIRST user of a fresh instance becomes admin.
   const role = (await needsFirstAdmin()) ? 'admin' : 'user'
-  const user = await db.user.create({ data: { name, role } })
+  const user = await db.user.create({ data: { name: gate.id, role } })
 
   // The personal node IS the account's server — its routing code is the
   // username itself. Kernel being down must not block sign-up: the UI
@@ -69,7 +86,7 @@ export async function POST(req: NextRequest) {
     const res = await fetch(`${kernelApi}/internal/nodes`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code: name, name, ownerId: user.id }),
+      body: JSON.stringify({ code: gate.id, name: gate.id, ownerId: user.id }),
       cache: 'no-store',
     })
     if (res.status === 409) {

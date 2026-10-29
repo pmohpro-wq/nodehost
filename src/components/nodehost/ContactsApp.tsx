@@ -9,13 +9,20 @@
  * persistent, curated, bounded — served by the module's own app API at
  * nodes/<id>/apps/contacts/*.
  *
- *  - Add from the network directory (one click)…
- *  - …or by raw address: a user on THIS host (`علی`) or on any federated
- *    host (`علی@بتا`) — even hosts this server has never heard of. The
- *    phone-book model: saving an address costs nothing, resolution happens
- *    at send time, and the row survives peers leaving the network forever.
- *  - Presence (online / in-network / saved-only) is computed by the kernel
- *    at read time — never stored, never stale.
+ * Adding a contact is RAW ADDRESSING with TWO separate boxes —
+ * «آیدی مخاطب» + «آیدی سرور» — because an address is (hostId, id):
+ *   - the SERVER box defaults to THIS NodeHost's id and follows it
+ *     reactively: when the admin renames the host, the box re-fills
+ *     itself from the next bootstrap poll (Request 11) — the default is
+ *     never a hardcoded string;
+ *   - typing another host's id there targets a user on ANY NodeHost —
+ *     even one this server has never heard of. The phone-book model:
+ *     saving an address costs nothing, resolution happens at send time,
+ *     and the row survives peers leaving the network forever.
+ *
+ * Contacts are REAL people: rows show live presence (online / in-network
+ * / saved-only) computed by the kernel at read time — never stored, never
+ * stale.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -74,8 +81,11 @@ const peerKey = (p: Peer) => `${p.host}|${p.node}`
 export function ContactsApp({ node }: { node: NodeDto }) {
   const { toast } = useToast()
   const base = `nodes/${node.id}/apps/contacts`
-  const directory = useNh((s) => s.data?.directory ?? [])
   const focusChat = useNh((s) => s.focusChat)
+  // Request 11: the add form's SERVER box defaults to the LIVE host id of
+  // this instance — the same value the admin card edits — and re-fills
+  // itself when it changes (bootstrap polls every UI_POLL_MS).
+  const hostId = useNh((s) => s.data?.host.code ?? '')
   const chatOn = node.moduleStates.some((s) => s.moduleId === 'chat' && s.enabled)
 
   const [rows, setRows] = useState<ContactRow[]>([])
@@ -83,13 +93,11 @@ export function ContactsApp({ node }: { node: NodeDto }) {
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
 
-  // add-by-address form
+  // add-by-address form — TWO separate boxes (contact id / host id)
   const [addNode, setAddNode] = useState('')
   const [addHost, setAddHost] = useState('')
+  const [hostTouched, setHostTouched] = useState(false)
   const [adding, setAdding] = useState(false)
-
-  // add-from-directory picker
-  const [picker, setPicker] = useState('')
 
   // inline editor
   const [editing, setEditing] = useState<string | null>(null)
@@ -101,6 +109,12 @@ export function ContactsApp({ node }: { node: NodeDto }) {
 
   const qRef = useRef(q)
   qRef.current = q
+
+  // The server box shows the host's CURRENT id until the user types their
+  // own — so an admin rename flows into the form with no reload.
+  useEffect(() => {
+    if (!hostTouched) setAddHost(hostId)
+  }, [hostId, hostTouched])
 
   const load = useCallback(async () => {
     try {
@@ -122,9 +136,9 @@ export function ContactsApp({ node }: { node: NodeDto }) {
 
   const addByAddress = async () => {
     const id = addNode.trim()
-    const host = addHost.trim() || me?.host || ''
+    const host = addHost.trim() || hostId || me?.host || ''
     if (!id || !host) {
-      toast({ title: 'شناسهٔ مخاطب را وارد کنید', variant: 'destructive' })
+      toast({ title: 'آیدی مخاطب را وارد کنید', variant: 'destructive' })
       return
     }
     setAdding(true)
@@ -134,32 +148,10 @@ export function ContactsApp({ node }: { node: NodeDto }) {
         node: id,
       })
       setAddNode('')
-      setAddHost('')
       toast({
         title: res.alreadyExisted ? 'از قبل در مخاطبین شما بود — به‌روزرسانی شد' : 'به مخاطبین اضافه شد',
+        description: `${id}@${host}`,
       })
-      await load()
-    } catch (err) {
-      toast({ title: 'افزودن ناموفق بود', description: String(err), variant: 'destructive' })
-    } finally {
-      setAdding(false)
-    }
-  }
-
-  const addFromPicker = async () => {
-    if (!picker) return
-    const [host, nodeId] = picker.split('|')
-    if (!host || !nodeId) return
-    const d = directory.find((x) => x.hostCode === host && x.nodeCode === nodeId)
-    setAdding(true)
-    try {
-      await nhPost(`${base}/add`, {
-        host,
-        node: nodeId,
-        name: d?.nodeName ?? '',
-      })
-      setPicker('')
-      toast({ title: 'به مخاطبین اضافه شد' })
       await load()
     } catch (err) {
       toast({ title: 'افزودن ناموفق بود', description: String(err), variant: 'destructive' })
@@ -194,14 +186,6 @@ export function ContactsApp({ node }: { node: NodeDto }) {
     setEditNote(row.note)
   }
 
-  // Directory picker options: everyone in the live network who is not
-  // already saved (and not me).
-  const knownKeys = new Set(rows.map((r) => peerKey(r)))
-  const pickerOptions = directory.filter(
-    (d) =>
-      !(d.hostCode === me?.host && d.nodeCode === me?.node) && !knownKeys.has(`${d.hostCode}|${d.nodeCode}`),
-  )
-
   // Client-side search on a bounded list (≤500 — the kernel enforces the cap).
   const needle = q.trim().toLowerCase()
   const visible = needle
@@ -221,57 +205,44 @@ export function ContactsApp({ node }: { node: NodeDto }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* ---- add: from the live directory ---- */}
+        {/* ---- add: raw addressing, two separate boxes ---- */}
         <div className="rounded-xl border p-3 space-y-2.5">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <UserPlus className="size-3.5" /> افزودن مخاطب
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              value={picker}
-              onChange={(e) => setPicker(e.target.value)}
-              className="h-9 flex-1 min-w-[180px] rounded-md border bg-background px-3 text-sm"
-              aria-label="انتخاب از دفترچهٔ شبکه"
-            >
-              <option value="">از دفترچهٔ شبکه انتخاب کنید…</option>
-              {pickerOptions.map((d) => (
-                <option key={`${d.hostCode}|${d.nodeCode}`} value={`${d.hostCode}|${d.nodeCode}`}>
-                  {d.nodeName} — {d.nodeCode}
-                  {d.hostCode !== me?.host ? `@${d.hostCode}` : ''}
-                </option>
-              ))}
-            </select>
-            <Button onClick={() => void addFromPicker()} disabled={!picker || adding} size="sm">
-              افزودن
-            </Button>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
             <Input
               dir="auto"
               className="h-9 flex-1 min-w-[140px]"
-              placeholder="شناسهٔ کاربر (مثلاً علی)"
+              placeholder="آیدی مخاطب"
               value={addNode}
               onChange={(e) => setAddNode(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && void addByAddress()}
+              aria-label="آیدی مخاطب"
             />
             <span className="text-muted-foreground text-sm" dir="ltr">
               @
             </span>
             <Input
               dir="ltr"
-              className="h-9 w-40"
-              placeholder={`میزبان (${me?.host ?? 'همین سرور'})`}
+              className="h-9 w-44 font-mono"
+              placeholder={hostId || 'hostid'}
               value={addHost}
-              onChange={(e) => setAddHost(e.target.value)}
+              onChange={(e) => {
+                setAddHost(e.target.value)
+                setHostTouched(true)
+              }}
               onKeyDown={(e) => e.key === 'Enter' && void addByAddress()}
+              aria-label="آیدی سرور"
             />
             <Button onClick={() => void addByAddress()} disabled={adding || !addNode.trim()} size="sm" variant="secondary">
               ذخیرهٔ آدرس
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground leading-5">
-            می‌توانید آدرس کاربری را ذخیره کنید که هنوز در شبکه نیست؛ مخاطبین شما دائمی می‌مانند و
-            حضورشان به‌محض دیده‌شدن در شبکه نمایش داده می‌شود. میزبان را خالی بگذارید یعنی همین سرور.
+            آیدی سرور پیش‌فرض همان نودهاست میزبان است (<span dir="ltr" className="font-mono">{hostId || '…'}</span>)
+            و با تغییر آیدی نودهاست، خودبه‌خود عوض می‌شود. برای مخاطبِ سرور دیگر، آیدی آن نودهاست را
+            وارد کنید. مخاطبین شما دائمی می‌مانند و حضورشان به‌محض دیده‌شدن در شبکه نمایش داده می‌شود.
           </p>
         </div>
 
@@ -293,7 +264,7 @@ export function ContactsApp({ node }: { node: NodeDto }) {
             {visible.length === 0 ? (
               <p className="text-xs text-muted-foreground leading-6 px-4 py-8 text-center">
                 {rows.length === 0
-                  ? 'دفترچهٔ شما خالی است — از دفترچهٔ شبکه اضافه کنید یا آدرس یک کاربر را ذخیره کنید. مخاطبین حتی اگر نودشان از شبکه خارج شود باقی می‌مانند.'
+                  ? 'دفترچهٔ شما خالی است — آیدی یک کاربر را با فرم بالا ذخیره کنید. مخاطبین حتی اگر نودشان از شبکه خارج شود باقی می‌مانند.'
                   : 'موردی مطابق جستجو پیدا نشد.'}
               </p>
             ) : (

@@ -60,6 +60,10 @@ export function AuthGate() {
               یک نام کاربری بنویسید — همین نام <span className="font-medium text-foreground">آیدی شما، نود شما و آدرس شما در شبکه</span> است.
               بار اول حساب و نود شخصی‌تان ساخته می‌شود؛ دفعات بعد با همان نام وارد می‌شوید.
             </p>
+            <p className="text-xs text-muted-foreground leading-5">
+              آیدی جدید فقط حروف انگلیسی کوچک و عدد است (مثل <span dir="ltr" className="font-mono">ali22</span>)؛
+              اگر نامی از قبل دارید — فارسی یا هر زبانی — همان را بنویسید تا وارد شوید.
+            </p>
           </div>
 
           <Card>
@@ -72,7 +76,7 @@ export function AuthGate() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && enter()}
-                  placeholder="مثلاً: سارا"
+                  placeholder="مثلاً: ali22"
                   autoFocus
                   maxLength={40}
                 />

@@ -4,8 +4,12 @@
  * ChatApp — the node's ONE app, mounted when the owner enables the
  * messenger module. A real two-way messenger:
  *
- *  - recipients come from the NETWORK DIRECTORY (every node on this
- *    host + nodes on federated hosts) — filtered to chat-enabled nodes;
+ *  - the conversation list is the OWNER'S CONTACTS (Request 6: «فقط
+ *    مخاطبین در پیام‌رسان») — the personal address book, not the raw
+ *    network directory; conversations with non-contact peers still
+ *    appear as marked rows so history is never hidden;
+ *  - when the contacts module is off, the list falls back to the
+ *    chat-enabled nodes of the directory (chat alone still works);
  *  - history and unread counts are the module's own app state, served
  *    by the kernel at nodes/<id>/apps/chat/*;
  *  - every message is a real NHP envelope (kernel-routed, federated,
@@ -50,6 +54,18 @@ interface Conversation {
   unread: number
 }
 
+interface BookRow {
+  host: string
+  node: string
+  name: string
+  presence: { known: boolean; online: boolean; hasChat: boolean; hostName: string }
+}
+
+interface BookReply {
+  ok: boolean
+  contacts: BookRow[]
+}
+
 interface ConvReply {
   ok: boolean
   me: { host: string; node: string; name: string }
@@ -77,6 +93,7 @@ export function ChatApp({ node }: { node: NodeDto }) {
 
   const [convs, setConvs] = useState<Conversation[]>([])
   const [contacts, setContacts] = useState<Contact[]>([])
+  const [book, setBook] = useState<BookRow[]>([])
   const [me, setMe] = useState<ConvReply['me'] | null>(null)
   const [selected, setSelected] = useState<Peer | null>(null)
   const [msgs, setMsgs] = useState<ChatMsg[]>([])
@@ -102,6 +119,18 @@ export function ChatApp({ node }: { node: NodeDto }) {
     }
   }, [base])
 
+  // Request 6: when the address book is enabled, THE BOOK is the
+  // messenger's list — fetched straight from the contacts app API.
+  const loadBook = useCallback(async () => {
+    if (!contactsOn) return
+    try {
+      const res = await nhGet<BookReply>(`nodes/${node.id}/apps/contacts/list`)
+      setBook(res.contacts ?? [])
+    } catch {
+      /* transient — next tick retries */
+    }
+  }, [contactsOn, node.id])
+
   const loadMsgs = useCallback(
     async (peer: Peer) => {
       try {
@@ -118,15 +147,17 @@ export function ChatApp({ node }: { node: NodeDto }) {
     [base],
   )
 
-  // Initial + polling loop (conversations + open thread).
+  // Initial + polling loop (conversations + open thread + the book).
   useEffect(() => {
     void loadConvs()
+    void loadBook()
     const t = setInterval(() => {
       void loadConvs()
+      void loadBook()
       if (selectedRef.current) void loadMsgs(selectedRef.current)
     }, 2500)
     return () => clearInterval(t)
-  }, [loadConvs, loadMsgs])
+  }, [loadConvs, loadBook, loadMsgs])
 
   // Keep the thread pinned to the newest message.
   useEffect(() => {
@@ -188,18 +219,28 @@ export function ChatApp({ node }: { node: NodeDto }) {
     }
   }
 
-  // Contacts merged with conversation overlays (history outlives chat being
-  // disabled on a peer — such rows stay visible but marked).
+  // The messenger's list (Request 6): the owner's contacts when the
+  // address book is enabled — directory otherwise; conversations with
+  // peers missing from the source list stay visible as marked rows.
+  const listRows: Contact[] = contactsOn
+    ? book.map((b) => ({
+        host: b.host,
+        hostName: b.presence.hostName ?? b.host,
+        node: b.node,
+        name: b.name || b.node,
+        online: b.presence.online,
+      }))
+    : contacts
   const convByPeer = new Map(convs.map((c) => [peerKey(c.peer), c]))
   const rows: (Contact | { node: string; host: string; orphan: true; conv: Conversation })[] = [
-    ...contacts,
+    ...listRows,
     ...convs
-      .filter((c) => !contacts.some((ct) => peerKey(ct) === peerKey(c.peer)))
+      .filter((c) => !listRows.some((ct) => peerKey(ct) === peerKey(c.peer)))
       .map((c) => ({ node: c.peer.node, host: c.peer.host, orphan: true as const, conv: c })),
   ]
   const totalUnread = convs.reduce((a, c) => a + c.unread, 0)
   const selectedPeer = selected
-    ? (contacts.find((c) => peerKey(c) === peerKey(selected)) ?? null)
+    ? (listRows.find((c) => peerKey(c) === peerKey(selected)) ?? null)
     : null
 
   return (
@@ -219,13 +260,14 @@ export function ChatApp({ node }: { node: NodeDto }) {
         {/* ---- directory / conversations column ---- */}
         <div className="rounded-xl border overflow-hidden">
           <div className="flex items-center gap-2 px-3 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground border-b">
-            <Users className="size-3.5" /> دفترچه شبکه
+            <Users className="size-3.5" /> {contactsOn ? 'مخاطبین' : 'دفترچه شبکه'}
           </div>
           <div className="max-h-[420px] overflow-y-auto divide-y">
             {rows.length === 0 ? (
               <p className="text-xs text-muted-foreground leading-6 px-4 py-6 text-center">
-                هنوز نود دیگری در شبکه نیست. برای تست، در مرورگر دوم با «ورود سریع» کاربر دومی
-                بسازید — نود او بلافاصله همین‌جا ظاهر می‌شود.
+                {contactsOn
+                  ? 'هنوز مخاطبی ندارید — از اپ «مخاطبین» آیدی یک کاربر را ذخیره کنید تا همین‌جا بیاید.'
+                  : 'هنوز نود دیگری در شبکه نیست. برای تست، در مرورگر دوم با «ورود سریع» کاربر دومی بسازید — نود او بلافاصله همین‌جا ظاهر می‌شود.'}
               </p>
             ) : (
               rows.map((r) => {
