@@ -386,3 +386,20 @@ Work Log:
 
 Stage Summary:
 - وضعیت پوش شفاف شد: مانع، توکن است نه کد؛ main محلی جلوتر از origin است و با نخستین توکن سالم پوش می‌شود
+
+---
+Task ID: 16
+Agent: main (Z.ai)
+Task: پوش موفق کامیت‌های معوق به گیت‌هاب با توکن معتبر — بسته‌شدن حلقهٔ پوش
+
+Work Log:
+- مالک توکن [REDACTED:github_token] را برای ریپو https://github.com/pmohpro-wq/nodehost ارسال کرد
+- اعتبارسنجی توکن: GET /repos/pmohpro-wq/nodehost → 200 OK (برخلاف توکن قبلیِ 401)
+- push با قرارداد ثبت‌شده در Task 15 انجام شد: git push https://<TOKEN>@github.com/pmohpro-wq/nodehost.git main → f6dc299..f8f2f00
+- چهار کامیت معوق منتشر شد: b5e3a45 (قانون واحد هویت)، 7a31778 (آیدی میزبان ادمین‌محور + معرفی نودهاست)، da6e208 (سوئیت‌های smoke هویت/میزبان)، f8f2f00 (worklog تسک‌های ۱۳–۱۵)
+- همگام‌سازی تأیید شد: rev-list 0/0 در هر دو جهت؛ origin/main = main = f8f2f00؛ working tree تمیز
+- صحت آرتیفکت‌های Task 17/Request 11/Task 16 روی دیسک بازبینی شد: HostIdentity.tsx، IntroduceHost.tsx، api/admin/host-identity/route.ts، tests/smoke-identity-host.ts همگی حاضرند
+
+Stage Summary:
+- بدهی انتشار صفر شد: هر آنچه در دوران توکن‌های باطل کامیت شده بود، حالا روی github.com/pmohpro-wq/nodehost عمومی است
+- پروژه در نقطهٔ پایدار قرار گرفت: تست‌های سبز (۲۶/۲۶، ۲۴/۲۴، ۲۰/۲۰، ۱۷/۱۷) + ریپو همگام + worklog به‌روز
