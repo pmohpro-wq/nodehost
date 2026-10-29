@@ -27,6 +27,21 @@ import { resolveIdGate } from '@/lib/identity'
  * call — which is what makes two tabs two independent users.
  */
 export async function POST(req: NextRequest) {
+  try {
+    return await enter(req)
+  } catch (err) {
+    // The door must never answer with an opaque empty 500 — any unexpected
+    // failure (db locked, engine hiccup…) still gets a readable Persian
+    // message, and the real cause lands in the server log for the admin.
+    console.error('[auth/enter] unexpected failure:', err)
+    return NextResponse.json(
+      { ok: false, error: 'خطای غیرمنتظرهٔ سرور — لطفاً دوباره تلاش کنید' },
+      { status: 500 },
+    )
+  }
+}
+
+async function enter(req: NextRequest) {
   let body: { name?: string }
   try {
     body = await req.json()
@@ -108,3 +123,4 @@ export async function POST(req: NextRequest) {
     nodeCreated,
   })
 }
+

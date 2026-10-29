@@ -16,6 +16,10 @@
  * Run with the stack up:  bun tests/smoke-identity-host.ts
  */
 
+// module marker: this file runs top-level awaits under bun, but tsc needs an
+// import/export for module detection to allow them.
+export {}
+
 const WEB = process.env.NH_WEB ?? 'http://127.0.0.1:3000'
 const KERNEL = process.env.NH_KERNEL ?? 'http://127.0.0.1:3013'
 const ADMIN = 'aaa' // first registrant of the base db = admin
