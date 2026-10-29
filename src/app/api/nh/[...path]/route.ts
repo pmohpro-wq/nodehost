@@ -159,8 +159,13 @@ async function forward(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     return passthrough(req, joined, search)
   }
 
-  // Federation management + manual heartbeat → admin only.
-  if (joined === 'hosts' || /^hosts\/[^/]+$/.test(joined) || joined === 'refresh') {
+  // Introduce a REMOTE NodeHost to this one — every signed-in user may
+  // ("هر کاربر بتواند یک نودهاست را به نودهاست خودش معرفی کند"). The
+  // kernel validates the wire shape; removal and manual heartbeat stay
+  // admin-only (destructive / control-plane operations).
+  if (method === 'POST' && joined === 'hosts') return passthrough(req, joined, search)
+
+  if (/^hosts\/[^/]+$/.test(joined) || joined === 'refresh') {
     if (viewer.role !== 'admin') return forbidden('مدیریت شبکه فقط برای ادمین')
     return passthrough(req, joined, search)
   }

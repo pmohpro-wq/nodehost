@@ -8,6 +8,7 @@
  */
 import type { Kernel } from './kernel'
 import { isValidEnvelope, makeEnvelope, NHP_SYS, WELL_KNOWN_PATH } from '../../src/core/nodehost/protocol'
+import { checkIdShape, ENGLISH_ID_ERROR, ID_RE } from '../../src/lib/identity'
 import { verifyIngressAuth } from './federation'
 import { listMailbox, markRowDelivered } from './mailbox'
 import { log, newAdminToken, newNodeCode, prisma } from './store'
@@ -186,6 +187,55 @@ async function moduleAppApi(
 }
 
 /**
+ * POST /internal/host/identity { code } — the admin sets THIS NodeHost's
+ * public id (the routing code every address is built on: id@hostId).
+ *
+ * The new id passes the ONE identity law (src/lib/identity.ts): shape +
+ * the English-only rule — a host id travels in NHP addresses, URLs and
+ * federation links, so it must be ASCII-safe. It must also not collide
+ * with a REMOTE host row (a local/remote code pair would make routing
+ * ambiguous).
+ *
+ * What changes: the local Host row's code + the live kernel.self.code —
+ * routing (to.host === self.code) picks the new id up in the same tick.
+ * What deliberately does NOT change: the database file (DATABASE_URL is
+ * independent of the id) and existing nodes/users. Remote peers keep a
+ * stale row under the old code until their TTL sweep — hello traffic
+ * re-learns the new id as a fresh host in the meantime (documented).
+ */
+async function setHostIdentity(req: Request, kernel: Kernel): Promise<Response> {
+  const body = await readBody<{ code?: string }>(req)
+  const gate = checkIdShape(String(body.code ?? ''))
+  if (!gate.ok) return json({ ok: false, error: gate.error }, gate.status)
+  if (!ID_RE.test(gate.id)) return json({ ok: false, error: ENGLISH_ID_ERROR }, 422)
+
+  const clash = await prisma.host.findFirst({ where: { code: gate.id, kind: 'remote' } })
+  if (clash)
+    return json(
+      { ok: false, error: 'این آیدی هم‌نام یک میزبانِ دوردست شناخته‌شده است' },
+      409,
+    )
+
+  const current = await prisma.host.findFirst({ where: { kind: 'local' } })
+  if (!current) return json({ ok: false, error: 'host row missing' }, 500)
+  if (current.code === gate.id) return json({ ok: true, code: gate.id, unchanged: true })
+
+  const host = await prisma.host.update({ where: { id: current.id }, data: { code: gate.id } })
+  kernel.self = {
+    id: host.id,
+    code: host.code,
+    name: host.name,
+    address: host.address,
+    gwPort: host.gwPort,
+  }
+  // Live module contexts freeze their identity at attach time — refresh
+  // them so the very next contacts/chat call addresses id@<new-host-id>.
+  await kernel.runtime.refreshIdentities()
+  await log('info', 'kernel', `host id changed: "${current.code}" → "${gate.id}"`)
+  return json({ ok: true, code: gate.id, previous: current.code })
+}
+
+/**
  * POST /internal/nodes — create a node.
  * Identity era (id = name): the web layer passes the user's username as
  * `code`, so ONE string is the user id, the node id and the network
@@ -253,23 +303,43 @@ async function deleteNode(kernel: Kernel, ref: string): Promise<Response> {
   return json({ ok: true })
 }
 
+/**
+ * POST /internal/hosts — introduce a REMOTE NodeHost to this one
+ * (federation peering). Every signed-in user may introduce a host via
+ * the web proxy; the kernel only validates the wire shape. `code` is the
+ * peer's host id (optional — generated when absent), `name` is optional
+ * display naming (defaults to the code), `address` is the peer's ingress
+ * URL and is the one required field.
+ */
 async function addHost(req: Request, kernel: Kernel): Promise<Response> {
   const body = await readBody<{ code?: string; name?: string; address?: string; gwPort?: number }>(req)
-  const name = String(body.name ?? '').trim()
   const address = String(body.address ?? '').trim().replace(/\/+$/, '')
-  if (!name || !address) return json({ ok: false, error: 'نام و آدرس میزبان الزامی است' }, 422)
+  if (!address) return json({ ok: false, error: 'آدرس نودهاست (ingress) الزامی است' }, 422)
   try {
     new URL(address)
   } catch {
     return json({ ok: false, error: 'آدرس نامعتبر است' }, 422)
   }
-  const code = String(body.code ?? '').trim() || `host-${newAdminToken().slice(3, 9)}`
+  let code = String(body.code ?? '').trim()
+  if (code) {
+    const gate = checkIdShape(code)
+    if (!gate.ok) return json({ ok: false, error: gate.error }, gate.status)
+    code = gate.id
+  } else {
+    code = `host-${newAdminToken().slice(3, 9)}`
+  }
+  const name = String(body.name ?? '').trim() || code
+  // A peer may never take over THIS host's routing code — the upsert below
+  // would silently rewrite the local row otherwise.
+  const local = await prisma.host.findFirst({ where: { kind: 'local' } })
+  if (local && local.code === code)
+    return json({ ok: false, error: 'این آیدی متعلق به همین نودهاست است' }, 409)
   const host = await prisma.host.upsert({
     where: { code },
     update: { name, address, gwPort: body.gwPort ?? null },
     create: { code, name, address, gwPort: body.gwPort ?? null, kind: 'remote' },
   })
-  await log('info', 'kernel', `remote host "${code}" added`)
+  await log('info', 'kernel', `remote host "${code}" introduced`)
   void kernel.heartbeatOnce()
   return json({ ok: true, host })
 }
@@ -323,6 +393,10 @@ export async function handleApi(req: Request, kernel: Kernel): Promise<Response>
 
   if (path === '/internal/nodes' && req.method === 'POST') {
     return createNode(req, kernel)
+  }
+
+  if (path === '/internal/host/identity' && req.method === 'POST') {
+    return setHostIdentity(req, kernel)
   }
 
   const nodeToggle = path.match(/^\/internal\/nodes\/([^/]+)\/modules$/)

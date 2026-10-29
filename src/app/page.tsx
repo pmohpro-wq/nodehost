@@ -10,6 +10,8 @@ import { useEffect } from 'react'
 import { Header } from '@/components/nodehost/Header'
 import { AuthGate } from '@/components/nodehost/AuthGate'
 import { MyNode } from '@/components/nodehost/MyNode'
+import { IntroduceHost } from '@/components/nodehost/IntroduceHost'
+import { HostIdentity } from '@/components/nodehost/HostIdentity'
 import { AdminUsers } from '@/components/nodehost/AdminUsers'
 import { UI_POLL_MS, useNh } from '@/components/nodehost/store'
 import { Network } from 'lucide-react'
@@ -44,6 +46,8 @@ export default function Home() {
 
       <main className="flex-1 mx-auto w-full max-w-3xl px-4 py-6 space-y-6">
         <MyNode />
+        <IntroduceHost />
+        {me.role === 'admin' && <HostIdentity />}
         {me.role === 'admin' && <AdminUsers />}
       </main>
 

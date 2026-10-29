@@ -119,6 +119,35 @@ export class ModuleRuntime {
   }
 
   /**
+   * Rebuild every live instance's identity (host id rename support).
+   * ctx.node.hostCode is frozen at attach time by design (sandbox
+   * identity); when the admin renames THIS host, the admin endpoint
+   * calls this so live contexts — and their send()/request() closures —
+   * immediately address from the NEW host id without detach churn.
+   */
+  async refreshIdentities() {
+    const nodes = await prisma.node.findMany({
+      include: { host: true, moduleStates: true },
+    })
+    for (const inst of this.live.values()) {
+      const node = nodes.find((n) => n.code === inst.nodeCode)
+      if (!node) continue
+      inst.ctx = this.buildContext(
+        {
+          id: node.id,
+          code: node.code,
+          name: node.name,
+          hostId: node.host.id,
+          hostCode: node.host.code,
+          hostName: node.host.name,
+        },
+        inst.moduleId,
+        inst.ctx.config,
+      )
+    }
+  }
+
+  /**
    * Serve a module's own app API (onApi) from its LIVE instance.
    * Returns null when the node/module pair has no live instance — the
    * caller maps that to HTTP 409 ("module disabled on this node").

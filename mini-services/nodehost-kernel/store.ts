@@ -120,23 +120,37 @@ async function upsertDemoNode(params: {
  * demo nodes. Everything is upsert-based so restarts are safe.
  */
 export async function ensureSeed(registry: Map<string, ModuleRegistration>) {
-  // 1) This host (kind=local)
-  const self = await prisma.host.upsert({
-    where: { code: ENV.hostCode },
-    update: {
-      name: ENV.hostName,
-      address: ENV.hostAddress,
-      gwPort: ENV.hostGwPort,
-      kind: 'local',
-    },
-    create: {
-      code: ENV.hostCode,
-      name: ENV.hostName,
-      address: ENV.hostAddress,
-      gwPort: ENV.hostGwPort,
-      kind: 'local',
-    },
-  })
+  // 1) This host (kind=local).
+  //    The host CODE is admin-owned state: once the admin sets a host id
+  //    (POST /internal/host/identity) it is persisted on THIS row and must
+  //    survive restarts — so boot resolves the row by kind, never by code.
+  //    ENV.hostCode only seeds a FRESH install (no local row yet); on an
+  //    existing instance the DB wins and env merely refreshes the
+  //    contact surface (name/address/gwPort). The database FILE name stays
+  //    whatever DATABASE_URL says — the host id is deliberately decoupled
+  //    from it, so renaming the host never moves data.
+  let self = await prisma.host.findFirst({ where: { kind: 'local' } })
+  if (self) {
+    self = await prisma.host.update({
+      where: { id: self.id },
+      data: {
+        name: ENV.hostName,
+        address: ENV.hostAddress,
+        gwPort: ENV.hostGwPort,
+        kind: 'local',
+      },
+    })
+  } else {
+    self = await prisma.host.create({
+      data: {
+        code: ENV.hostCode,
+        name: ENV.hostName,
+        address: ENV.hostAddress,
+        gwPort: ENV.hostGwPort,
+        kind: 'local',
+      },
+    })
+  }
 
   // 2) Module registry from the kernel's loaded modules
   for (const reg of registry.values()) {
