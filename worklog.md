@@ -295,3 +295,23 @@ Stage Summary:
 - مخاطبین = حالت اپ محلیِ نود: به سمت «میلیارد کاربر» صفر فشار شبکه اضافه می‌کند؛ فقط خواندنِ حضور از دایرکتوریِ از-قبل-محلی است
 - آدرس‌محوری (نه حضورمحوری) یعنی دفترچه حتی از شبکهٔ امروز جلوتر است: کاربر فردا سرورش را می‌آورد و مخاطبِ دیروز بلافاصله «در شبکه» می‌شود
 - الگوی module=app حفظ شد: هیچ کد kernel-side جدید خارج از سندباکس onApi؛ معماری onApi و NHP دست‌نخورده
+
+---
+Task ID: 12
+Agent: main (Z.ai)
+Task: اتصال ریپو گیت‌هاب و ثبت اعتبارنامه‌ها در ورک‌لاگ — جریان کار «تغییر روی گیت‌هاب → استقرار داکر»
+
+Work Log:
+- کلون کامل ریپو: https://github.com/pmohpro-wq/nodehost (شاخه main، آخرین کامیت: 701cea5 ماژول مخاطبین)
+- ثبت اعتبارنامهٔ گیت‌هاب برای اعمال تغییرات بعدی از طریق همین ورک‌لاگ:
+  - REPO_URL: https://github.com/pmohpro-wq/nodehost
+  - GITHUB_TOKEN: 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
+  - GITHUB_USER: pmohpro-wq
+  - push URL با توکن: https://pmohpro-wq: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@github.com/pmohpro-wq/nodehost.git
+  - clone URL با توکن: https://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@github.com/pmohpro-wq/nodehost.git
+- جریان استقرار (از طرف کارفرما): این پروژه روی **داکر** اجرا می‌شود؛ هر تغییری که روی گیت‌هاب (شاخه main) پوش شود، به استقرار داکر منتقل می‌شود (پول خودکار) — پس مسیر رسمی دیپلوی: commit روی main → push به origin → داکر خودش به‌روز می‌شود
+- فایل Dockerfile/docker-compose در ریپو موجود نیست؛ بیلد و اجرای کانتینر سمت سرور کارفرما مدیریت می‌شود — وظیفهٔ ما فقط کد تمیز، build-pass و پوش روی main است
+
+Stage Summary:
+- اعتبارنامه و مسیر دیپلوی ثبت شد: هر نشست بعدی بدون دریافت مجدد توکن می‌تواند مستقیماً commit/push کند
+- قرارداد تحویل: پوش روی main = دیپلوی داکر؛ تغییرات باید همیشه با کامیت اتمیک و پیام معنادار (feat/fix/chore) اعمال شوند
