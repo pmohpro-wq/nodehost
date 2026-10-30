@@ -385,6 +385,115 @@ export class Federation {
   // ----------------------------------------------------------
 
   /**
+   * PROBE a candidate peer by INGRESS URL (introduction handshake, leg 1):
+   *   1. fetch `<address>/../.well-known/nhp` (normalize away trailing
+   *      path segments so callers may paste either the ingress URL or
+   *      the bare host URL)
+   *   2. require nhp=1 + a non-empty `host.code` + `host.ingress`
+   *   3. the returned ingress is AUTHORITATIVE — it overrides whatever
+   *      the caller typed, because the peer advertises its own canonical
+   *      ingress (it may differ from what the caller guessed, e.g. behind
+   *      a reverse proxy)
+   *   4. reject loopback addresses in the doc (a remote peer that
+   *      advertises 127.0.0.1 is misconfigured and unreachable from us)
+   *
+   * Returns the validated peer descriptor or throws a localized Error.
+   * Used by admin.addHost so that introducing a peer never stores a dead
+   * address — the peer must prove it is a live NodeHost first.
+   */
+  async probePeerByAddress(rawAddress: string): Promise<{
+    code: string
+    name: string
+    ingress: string
+    gwPort: number | null
+  }> {
+    const base = rawAddress.trim().replace(/\/+$/, '')
+    // Strip everything after the last known NHP path so callers can paste
+    // either `http://host:3013/ingress` or `http://host:3013` — both work.
+    const origin = base.replace(/\/(?:ingress|internal\/?.*|\.well-known\/?.*)$/, '')
+    const url = `${origin}${WELL_KNOWN_PATH}`
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), RESOLVE_TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetch(url, {
+        signal: ctrl.signal,
+        headers: { accept: 'application/json' },
+      })
+    } catch (err) {
+      clearTimeout(timer)
+      throw new Error(`نودهاستی در این آدرس پیدا نشد — ${String(err).replace(/^Error:\s*/, '')}`)
+    }
+    clearTimeout(timer)
+    if (!res.ok) {
+      throw new Error(`نودهاست پاسخ نداد (HTTP ${res.status})`)
+    }
+    const doc = (await res.json().catch(() => null)) as WellKnownDoc | null
+    if (!doc || doc.nhp !== 1 || !doc.host?.code || !doc.host?.ingress) {
+      throw new Error('این آدرس متعلق به یک نودهاست نیست (سند well-known نامعتبر)')
+    }
+    const ingress = String(doc.host.ingress).trim()
+    // Liveness hygiene: if the CALLER typed a public address but the peer
+    // advertises a loopback ingress, the peer is misconfigured — adopt
+    // nothing. (When the caller itself is on loopback — typical in local
+    // dev/sandbox — we accept the loopback doc because that IS the real
+    // address of the peer from where we sit.)
+    if (!isLoopbackish(rawAddress) && isLoopbackish(ingress)) {
+      throw new Error('نودهاست مقصد یک آدرس loopback تبلیغ کرده — از بیرون قابل دسترس نیست')
+    }
+    return {
+      code: String(doc.host.code),
+      name: String(doc.host.name ?? doc.host.code),
+      ingress,
+      gwPort: doc.host.gwPort ?? null,
+    }
+  }
+
+  /**
+   * MUTUAL registration (introduction handshake, leg 2): after we have
+   * adopted a peer, we POST OUR OWN descriptor to the peer's
+   * `/internal/host/introduce-self` so the peer learns about us too.
+   * The peer verifies us by probing OUR well-known (the same leg 1 in
+   * reverse) — so neither side can be spoofed into trusting a fake host.
+   *
+   * Best-effort: if the peer is temporarily down or refuses, we still
+   * keep our local row (we know them; they'll learn about us on the next
+   * hello sweep). Returns true when the peer acknowledged.
+   */
+  async introduceSelfToPeer(peerIngress: string): Promise<boolean> {
+    const self = this.kernel.self
+    const payload = {
+      code: self.code,
+      name: self.name,
+      address: self.address,
+      gwPort: self.gwPort,
+    }
+    // The peer's well-known ADVERTISES an ingress URL like
+    // `http://host:port/ingress` — but /internal/* lives at the API root,
+    // not under /ingress. Strip the /ingress suffix so we POST to the
+    // correct control-plane path on the peer.
+    const apiBase = peerIngress.replace(/\/+$/, '').replace(/\/ingress$/, '')
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), POST_TIMEOUT_MS)
+    try {
+      const res = await fetch(`${apiBase}/internal/host/introduce-self`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(linkAuthHeader() ? { authorization: linkAuthHeader() } : {}),
+        },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal,
+      })
+      clearTimeout(timer)
+      return res.ok
+    } catch {
+      clearTimeout(timer)
+      return false
+    }
+  }
+
+  /**
    * Resolve a host code to a routable Host row, lazily:
    *  1. known row with a real address -> return it
    *  2. domain-shaped code -> fetch /.well-known/nhp and adopt the peer

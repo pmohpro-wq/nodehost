@@ -336,44 +336,169 @@ async function deleteNode(kernel: Kernel, ref: string): Promise<Response> {
 }
 
 /**
- * POST /internal/hosts — introduce a REMOTE NodeHost to this one
- * (federation peering). Every signed-in user may introduce a host via
- * the web proxy; the kernel only validates the wire shape. `code` is the
- * peer's host id (optional — generated when absent), `name` is optional
- * display naming (defaults to the code), `address` is the peer's ingress
- * URL and is the one required field.
+ * POST /internal/hosts — introduce a REMOTE NodeHost to this one via a
+ * VERIFIED two-way handshake:
+ *
+ *   leg 1 (probe)  — we GET the peer's /.well-known/nhp from the user-
+ *     supplied address. The peer must be a LIVE NodeHost and must
+ *     advertise a routable ingress. The peer's `code` is read FROM THE
+ *     PEER's document — never from the user — so the user cannot mis-
+ *     label a peer or invent a code. If the address is dead or the doc
+ *     is invalid, we 422 with a Persian message and store nothing.
+ *
+ *   leg 2 (mutual) — after we have adopted the peer, we POST our own
+ *     descriptor to the peer's /internal/host/introduce-self endpoint.
+ *     The peer runs the SAME probe against us, then stores us. This
+ *     makes the recognition MUTUAL: if A introduces B, B also learns
+ *     about A in the same handshake — without B's admin having to do
+ *     anything. (Best-effort: a peer that is temporarily unreachable
+ *     still gets adopted on our side; the next hello sweep will
+ *     complete the loop.)
+ *
+ * The user-supplied `code` field is now IGNORED — the peer's id is
+ * authoritative. `name` may still be overridden for display only.
  */
 async function addHost(req: Request, kernel: Kernel): Promise<Response> {
   const body = await readBody<{ code?: string; name?: string; address?: string; gwPort?: number }>(req)
-  const address = String(body.address ?? '').trim().replace(/\/+$/, '')
+  const address = String(body.address ?? '').trim()
   if (!address) return json({ ok: false, error: 'آدرس نودهاست (ingress) الزامی است' }, 422)
   try {
     new URL(address)
   } catch {
     return json({ ok: false, error: 'آدرس نامعتبر است' }, 422)
   }
-  let code = String(body.code ?? '').trim()
-  if (code) {
-    const gate = checkIdShape(code)
-    if (!gate.ok) return json({ ok: false, error: gate.error }, gate.status)
-    code = gate.id
-  } else {
-    code = `host-${newAdminToken().slice(3, 9)}`
+
+  // --- leg 1: probe the peer -------------------------------------------
+  let peer: { code: string; name: string; ingress: string; gwPort: number | null }
+  try {
+    peer = await kernel.federation.probePeerByAddress(address)
+  } catch (err) {
+    const msg = String(err).replace(/^Error:\s*/, '')
+    return json({ ok: false, error: msg || 'نودهاست مقصد در دسترس نیست' }, 422)
   }
-  const name = String(body.name ?? '').trim() || code
+
   // A peer may never take over THIS host's routing code — the upsert below
   // would silently rewrite the local row otherwise.
   const local = await prisma.host.findFirst({ where: { kind: 'local' } })
-  if (local && local.code === code)
+  if (local && local.code === peer.code)
     return json({ ok: false, error: 'این آیدی متعلق به همین نودهاست است' }, 409)
+
+  // The display name: caller override > peer-advertised > code.
+  const displayName = String(body.name ?? '').trim() || peer.name
   const host = await prisma.host.upsert({
-    where: { code },
-    update: { name, address, gwPort: body.gwPort ?? null },
-    create: { code, name, address, gwPort: body.gwPort ?? null, kind: 'remote' },
+    where: { code: peer.code },
+    update: {
+      name: displayName,
+      address: peer.ingress,
+      gwPort: peer.gwPort,
+      kind: 'remote',
+      // A successful probe is also a liveness signal — mark online.
+      status: 'online',
+      lastSeen: new Date(),
+    },
+    create: {
+      code: peer.code,
+      name: displayName,
+      address: peer.ingress,
+      gwPort: peer.gwPort,
+      kind: 'remote',
+      status: 'online',
+      lastSeen: new Date(),
+    },
   })
-  await log('info', 'kernel', `remote host "${code}" introduced`)
+  await log('info', 'kernel', `remote host "${peer.code}" introduced via verified probe`)
+
+  // --- leg 2: mutual registration --------------------------------------
+  // Best-effort: a peer behind a one-way firewall may refuse; that's fine,
+  // our side still has the row and the next heartbeat will retry.
+  let mutual = false
+  try {
+    mutual = await kernel.federation.introduceSelfToPeer(peer.ingress)
+    if (mutual) {
+      await log('info', 'host', `mutual handshake ok — peer "${peer.code}" also knows us now`)
+    } else {
+      await log('warn', 'host', `peer "${peer.code}" did not acknowledge mutual introduce-self`, {
+        address: peer.ingress,
+      })
+    }
+  } catch (err) {
+    await log('warn', 'host', `mutual introduce-self to "${peer.code}" failed`, {
+      error: String(err).replace(/^Error:\s*/, ''),
+    })
+  }
+
   void kernel.heartbeatOnce()
-  return json({ ok: true, host })
+  return json({ ok: true, host, mutual, peer: { code: peer.code, name: peer.name, ingress: peer.ingress } })
+}
+
+/**
+ * POST /internal/host/introduce-self — a REMOTE NodeHost announces itself
+ * to us (the inbound leg of the mutual handshake). The body carries the
+ * peer's self-descriptor { code, name, address, gwPort }.
+ *
+ * We do NOT trust the body blindly — that would let anyone register a
+ * fake host row by claiming a code. Instead we probe the advertised
+ * address (leg 1 in reverse): the peer must serve a well-known doc that
+ * MATCHES the code it claimed. Only then do we adopt it.
+ *
+ * This endpoint is reachable from the network (it lives under /internal
+ * but is called by peer kernels, not the web proxy), so it honors the
+ * same link auth as /ingress when NHP_LINK_SECRET is set.
+ */
+async function introduceSelf(req: Request, kernel: Kernel): Promise<Response> {
+  if (!verifyIngressAuth(req.headers.get('authorization'))) {
+    return json({ ok: false, error: 'unauthorized' }, 401)
+  }
+  const body = await readBody<{ code?: string; name?: string; address?: string; gwPort?: number }>(req)
+  const claimedAddress = String(body.address ?? '').trim()
+  if (!claimedAddress) return json({ ok: false, error: 'address required' }, 422)
+
+  // Verify by probing — the peer must be a real, live NodeHost whose
+  // well-known doc carries the same code it claimed in the body.
+  let peer: { code: string; name: string; ingress: string; gwPort: number | null }
+  try {
+    peer = await kernel.federation.probePeerByAddress(claimedAddress)
+  } catch (err) {
+    const msg = String(err).replace(/^Error:\s*/, '')
+    return json({ ok: false, error: msg || 'peer not reachable' }, 422)
+  }
+  const claimedCode = String(body.code ?? '').trim()
+  if (claimedCode && claimedCode !== peer.code) {
+    return json(
+      { ok: false, error: `code mismatch: body says "${claimedCode}" but peer serves "${peer.code}"` },
+      422,
+    )
+  }
+
+  // Never let a peer claim OUR local code.
+  const local = await prisma.host.findFirst({ where: { kind: 'local' } })
+  if (local && local.code === peer.code) {
+    return json({ ok: false, error: 'this code belongs to this host' }, 409)
+  }
+
+  await prisma.host.upsert({
+    where: { code: peer.code },
+    update: {
+      name: peer.name,
+      address: peer.ingress,
+      gwPort: peer.gwPort,
+      kind: 'remote',
+      status: 'online',
+      lastSeen: new Date(),
+    },
+    create: {
+      code: peer.code,
+      name: peer.name,
+      address: peer.ingress,
+      gwPort: peer.gwPort,
+      kind: 'remote',
+      status: 'online',
+      lastSeen: new Date(),
+    },
+  })
+  await log('info', 'host', `peer "${peer.code}" registered itself via introduce-self`)
+  void kernel.heartbeatOnce()
+  return json({ ok: true, code: peer.code })
 }
 
 async function deleteHost(ref: string): Promise<Response> {
@@ -458,6 +583,12 @@ export async function handleApi(req: Request, kernel: Kernel): Promise<Response>
 
   if (path === '/internal/hosts' && req.method === 'POST') {
     return addHost(req, kernel)
+  }
+
+  // Inbound leg of the mutual federation handshake — called by peer
+  // kernels (NOT the web proxy) after we introduced them.
+  if (path === '/internal/host/introduce-self' && req.method === 'POST') {
+    return introduceSelf(req, kernel)
   }
 
   const hostDelete = path.match(/^\/internal\/hosts\/([^/]+)$/)

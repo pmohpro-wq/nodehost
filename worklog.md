@@ -504,3 +504,45 @@ Stage Summary:
 - اعتبارنامهٔ گیت‌هاب و توکن جدید به‌صورت امن (فایل 0600 + gitignored + helper اسکریپت با GIT_ASKPASS) ثبت شد — توکن هرگز در worklog یا git قرار نمی‌گیرد
 - پوش از این پس یک‌دست: `bash scripts/git-push.sh "<msg>"` → main → کارفرما → داکر
 - توصیهٔ امنیتی به مالک: توکن در یک پیام عمومی ارسال شده بود — پس از اتمام کار، در github.com/settings/tokens این توکن را revoke کنید و توکن تازه بسازید (و فایل `.github-token` را با آن جایگزین کنید)
+
+
+---
+Task ID: 21
+Agent: main (Z.ai)
+Task: رفع سه باگ فرایند معرفی نودهاست — ۱) پذیرش هر آدرسی بدون بررسی ۲) عدم کشف آیدی مقصد ۳) عدم شناخت متقابل
+
+Work Log:
+- گزارش مالک: «فرایند معرفی نودهاست مشکل دارد. اول اینکه هر آدرسی را بدون بررسی می‌پذیرد. دوم اینکه آیدی نودهاست مقصد را کشف و بروزرسانی نمی‌کند. سوم اینکه این شناخت باید متقابل باشد. اگر یک نودهاست نودهاست دیگر را شناخت، هر دو هم را بشناسند.»
+- ریشه‌یابی در `mini-services/nodehost-kernel/admin.ts::addHost`:
+  · مشکل ۱ — فقط `new URL(address)` چک می‌شد؛ آدرس مرده یا غیر-نودهاست بدون هیچ probeی ثبت می‌شد (۴ ردیف ghost `host-xxxxxx` با آدرس‌های preview غیرقابل‌دسترس در db کارفرما پیدا شد)
+  · مشکل ۲ — `code` یا از کاربر گرفته می‌شد یا تصادفی (`host-` + ۶ hex) ساخته می‌شد؛ هیچ کشفی از آیدی واقعی peer وجود نداشت
+  · مشکل ۳ — فقط ما peer را در `Host` table ثبت می‌کردیم؛ peer تا نخستین hello از ما هیچ اطلاع از ما نداشت (یک‌طرفه)
+- طراحی handshake دوعمله‌ای VERIFY-MUTUAL:
+  · leg 1 (probe): قبل از ثبت، `GET <address>/.well-known/nhp` می‌گیریم. peer باید نودهاست زنده باشد با سند معتبر (`nhp=1`, `host.code`, `host.ingress`). آدرس مرده → ۴۲۲ با پیام فارسی. آدرس غیر-نودهاست → ۴۲۲. آیدی peer از سند خوانده می‌شود (نه از کاربر) — `code` کاربر کاملاً نادیده گرفته می‌شود
+  · leg 2 (mutual): بعد از adopt، descriptor خودمان را به `POST <peer>/internal/host/introduce-self` می‌فرستیم. peer همان probe را برعکس روی ما می‌زند، و اگر سند ما با `code` ادعاشده تطبیق کرد، ما را در `Host` table خودش ثبت می‌کند. این شناخت را متقابل می‌کند: A→B هم‌زمان B→A
+  · بهداشت loopback: اگر کاربر آدرس عمومی داده ولی peer در well-known لوپ‌بک تبلیغ کند → misconfig، رد می‌شود. اگر کاربر خودش روی لوپ‌بک است (dev/sandbox) → می‌پذیریم
+- پیاده‌سازی:
+  · `federation.ts::probePeerByAddress(rawAddress)` — fetch well-known با timeout، normalize آدرس (ingress/root/with-path همه کار می‌کنند)، validation سند، reject loopback-if-misconfig
+  · `federation.ts::introduceSelfToPeer(peerIngress)` — POST به `/internal/host/introduce-self` با link-auth header؛ best-effort (fail → false، ولی ردیف محلی سر جای خود می‌ماند)
+  · `admin.ts::addHost` بازنویسی شد: حذف کامل `code` از کاربر؛ probe → adopt با آیدی peer → mutual introduce-self. response شامل `peer.code` (کشف‌شده)، `mutual` (boolean)، `host` (ردیف ثبت‌شده) است
+  · `admin.ts::introduceSelf(req, kernel)` جدید — endpoint ورودی برای peer kernels. link-auth الزامی. probe برعکس روی آدرس ادعاشده. اگر `code` body با `code` well-known تطبیق نکرد → ۴۲۲ (ضد جعل). هرگز local code را overwrite نمی‌کند
+  · route table: `POST /internal/host/introduce-self` اضافه شد
+  · UI `IntroduceHost.tsx` بازنویسی شد: حذف فیلد «آیدی نودهاست» (دیگر کاربری نیست)؛ نمایش نتیجه probe با badge سبز/قرمز و اطلاعات peer کشف‌شده + وضعیت mutual
+- پاک‌سازی آثار باگ قدیمی: ۴ ردیف ghost (`host-37aa5b`, `host-c70998`, `host-9269bf`, `host-38e9c7`) از db کارفرما حذف شدند
+- تست خودکار `scripts/test-mutual-federation.sh` (جدید): ۶ سناریو، ۱۰ چک:
+  · TEST 1: آدرس مرده → ۴۲۲ ✓
+  · TEST 2: آدرس غیر-نودهاست → ۴۲۲ ✓
+  · TEST 3: معرفی واقعی → ok=true، mutual=true، peer.code='beta' از well-known ✓
+  · TEST 4: alfa می‌داند beta؛ beta می‌داند zzz (mutual تأیید دوطرفه) ✓
+  · TEST 5: re-introduce idempotent (یک ردیف، نه دو تا) ✓
+  · TEST 6: `code:'evil-fake-code'` از کاربر نادیده گرفته می‌شود — peer.code همچنان 'beta' ✓
+  · ۱۰/۱۰ سبز
+- E2E از طریق web proxy (با cookie کاربر `vvv`): POST /api/nh/hosts → ok=true، mutual=true، alfa/bootstrap شامل beta، beta/bootstrap شامل zzz ✓
+- tsc تمیز، eslint تمیز، next build موفق، web و kernel با build جدید restart شدند
+
+Stage Summary:
+- سه باگ با یک handshake واحد حل شد: probe (راستی‌آزمایی زنده‌بودن) + discover (کشف آیدی از peer) + mutual (معرفی خود به peer)
+- قانون طلایی جدید: هیچ آیدی‌ای از کاربر پذیرفته نمی‌شود — peer آیدی خودش را از طریق well-known سند می‌کند، و ما هم خودمان را با همین مکانیزم معرفی می‌کنیم (ضد جعل)
+- شناخت حالا متقابل است: اگر A نودهاست B را معرفی کند، B هم در همان handshake نودهاست A را می‌شناسد — بدون هیچ اقدام ادمین سمت B
+- بهداشت: ردیف‌های ghost پاک شدند، تست خودکار به جعبه‌ابزار اضافه شد، UI ساده‌تر شد (یک فیلد کمتر، یک بازخورد واضح‌تر)
+

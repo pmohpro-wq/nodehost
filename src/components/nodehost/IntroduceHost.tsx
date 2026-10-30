@@ -3,61 +3,76 @@
 /**
  * IntroduceHost — "هر کاربر بتواند یک نودهاست را به نودهاست خودش معرفی کند".
  *
- * A NodeHost meets another NodeHost by ADDRESS: whoever knows a peer's
- * ingress URL can introduce it to THIS instance — a host-level address
- * book. The kernel then heartbeats (sys.hello) the peer, learns its
- * roster, and mail starts flowing both ways (store-and-forward covers
- * the offline side). No admin gate on INTRODUCING: an address costs
- * nothing and hurts nobody; removing a host stays admin-only.
+ * Federation peering is a VERIFIED MUTUAL handshake:
+ *  1. the user pastes a peer's address (ingress URL or bare host URL)
+ *  2. our kernel probes the peer's /.well-known/nhp — the peer must be a
+ *     live NodeHost; dead addresses are rejected with a Persian message
+ *  3. the peer's id (code) is DISCOVERED from the well-known doc, not
+ *     typed by the user — so mislabeling is impossible
+ *  4. after adopting the peer, our kernel POSTs its own descriptor to
+ *     the peer's /internal/host/introduce-self — the peer probes us back
+ *     and adopts us too. The recognition is MUTUAL: A→B also gives B→A
+ *     in the same handshake.
  *
- * The peer id follows the identity law's SHAPE leg only (2..40, no `|`,
- * no control chars) — remote ids may be domain-shaped (chat.example.com),
- * so the English-only leg deliberately does NOT apply here.
+ * No admin gate on INTRODUCING: an address costs nothing and the peer
+ * must verify itself before any row is stored; removing a host stays
+ * admin-only.
  */
 import { useState } from 'react'
-import { Globe, Plus } from 'lucide-react'
+import { Globe, Plus, CheckCircle2, AlertTriangle, ArrowRightLeft } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
-import { checkIdShape } from '@/lib/identity'
 import { nhPost } from './api'
 import { useNh } from './store'
 import { StatusDot } from './bits'
 
+interface IntroduceResult {
+  ok: boolean
+  host?: { id: string; code: string; name: string; address: string; status?: string }
+  mutual?: boolean
+  peer?: { code: string; name: string; ingress: string }
+  error?: string
+}
+
 export function IntroduceHost() {
   const { data, refresh } = useNh()
   const { toast } = useToast()
-  const [code, setCode] = useState('')
   const [address, setAddress] = useState('')
   const [busy, setBusy] = useState(false)
+  const [lastResult, setLastResult] = useState<IntroduceResult | null>(null)
 
   const peers = data?.hosts ?? []
 
   const introduce = async () => {
-    const id = code.trim()
     const addr = address.trim()
-    if (id) {
-      const gate = checkIdShape(id)
-      if (!gate.ok) {
-        toast({ title: 'آیدی نودهاست نامعتبر است', description: gate.error, variant: 'destructive' })
-        return
-      }
-    }
     if (!addr) {
       toast({ title: 'آدرس نودهاست را وارد کنید', variant: 'destructive' })
       return
     }
     setBusy(true)
+    setLastResult(null)
     try {
-      await nhPost('hosts', { code: id || undefined, address: addr })
-      toast({ title: 'نودهاست معرفی شد', description: 'با نخستین تماس، نودهایش وارد دفترچهٔ شبکه می‌شوند' })
-      setCode('')
-      setAddress('')
-      await refresh()
+      const res = (await nhPost('hosts', { address: addr })) as IntroduceResult
+      if (res.ok) {
+        setLastResult(res)
+        toast({
+          title: 'نودهاست معرفی شد',
+          description: res.mutual
+            ? `شناسایی متقابل برقرار شد — «${res.peer?.code}» هم ما را شناخت`
+            : `«${res.peer?.code}» معرفی شد — شناسایی متقابل در تماس بعدی تکمیل می‌شود`,
+        })
+        setAddress('')
+        await refresh()
+      } else {
+        throw new Error(res.error || 'معرفی ناموفق بود')
+      }
     } catch (err) {
-      toast({ title: 'معرفی ناموفق بود', description: String(err), variant: 'destructive' })
+      const msg = String(err).replace(/^Error:\s*/, '')
+      toast({ title: 'معرفی ناموفق بود', description: msg, variant: 'destructive' })
+      setLastResult({ ok: false, error: msg })
     } finally {
       setBusy(false)
     }
@@ -75,33 +90,59 @@ export function IntroduceHost() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground leading-6">
-          هر کاربر می‌تواند نودهاستی را که آدرسش را می‌داند به همین نودهاست معرفی کند — مثل دادن
-          شمارهٔ تلفن. بعد از معرفی، دو سرور با هم صحبت می‌کنند و کاربران آن نودهاست در دفترچهٔ شبکه
-          دیده می‌شوند.
+          آدرس نودهاست مقصد را وارد کنید — خودش را به ما معرفی می‌کند و آیدی‌اش به‌صورت
+          خودکار از سرور مقصد خوانده می‌شود. سپس ما هم خودمان را به او معرفی می‌کنیم
+          تا شناخت دو سرور متقابل شود.
         </p>
         <div className="flex flex-wrap gap-2 items-center">
           <Input
             dir="ltr"
-            className="h-9 w-36 font-mono"
-            placeholder="آیدی نودهاست (اختیاری)"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            maxLength={40}
-            aria-label="آیدی نودهاست مقصد"
-          />
-          <Input
-            dir="ltr"
-            className="h-9 flex-1 min-w-[220px] font-mono"
-            placeholder="آدرس ingress (مثلاً https://chat.example.com/ingress)"
+            className="h-9 flex-1 min-w-[260px] font-mono"
+            placeholder="آدرس نودهاست مقصد (مثلاً https://chat.example.com/ingress)"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void introduce()}
             aria-label="آدرس نودهاست مقصد"
+            disabled={busy}
           />
           <Button onClick={() => void introduce()} disabled={busy || !address.trim()} size="sm">
-            <Plus className="size-4" /> معرفی
+            <Plus className="size-4" /> {busy ? 'در حال بررسی...' : 'معرفی'}
           </Button>
         </div>
+
+        {lastResult && (
+          <div
+            className={`rounded-md border p-3 text-sm leading-6 ${
+              lastResult.ok
+                ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400'
+                : 'border-destructive/30 bg-destructive/5 text-destructive'
+            }`}
+          >
+            {lastResult.ok ? (
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-2 font-medium">
+                  <CheckCircle2 className="size-4" />
+                  نودهاست «{lastResult.peer?.code}» شناسایی و معرفی شد
+                </div>
+                <div className="text-xs text-muted-foreground" dir="ltr">
+                  {lastResult.peer?.ingress}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <ArrowRightLeft className="size-4" />
+                  {lastResult.mutual
+                    ? 'شناسایی متقابل برقرار شد — هر دو سرور هم را می‌شناسند'
+                    : 'شناسایی متقابل در تماس بعدی (heartbeat) تکمیل می‌شود'}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 font-medium">
+                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+                <span>{lastResult.error}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {peers.length > 0 && (
           <div className="flex flex-wrap gap-2 pt-1">
             {peers.map((h) => (
