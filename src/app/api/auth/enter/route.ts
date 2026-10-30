@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { db, withDbRetry } from '@/lib/db'
 import { needsFirstAdmin } from '@/lib/auth'
 import { resolveIdGate } from '@/lib/identity'
 
@@ -64,8 +64,9 @@ async function enter(req: NextRequest) {
     )
 
   // Existing name → plain login. Exact match first: legacy holders (any
-  // alphabet) keep their id forever.
-  const existing = await db.user.findUnique({ where: { name } })
+  // alphabet) keep their id forever. Wraps withDbRetry so a stale pool
+  // (kernel restarted under us) doesn't 500 the door.
+  const existing = await withDbRetry((c) => c.user.findUnique({ where: { name } }))
   if (existing) {
     if (existing.status !== 'active')
       return NextResponse.json({ ok: false, error: 'این حساب غیرفعال است' }, { status: 403 })
@@ -79,9 +80,11 @@ async function enter(req: NextRequest) {
   // New id → the full ladder. The case-alias leg is a case-insensitive
   // scan (SQLite lower() is ASCII-scoped — exactly the alphabet new ids
   // live in; Persian names can never collide with an English id anyway).
-  const alias = await db.$queryRawUnsafe<{ name: string }[]>(
-    'SELECT name FROM User WHERE lower(name) = ? LIMIT 1',
-    name.toLowerCase(),
+  const alias = await withDbRetry((c) =>
+    c.$queryRawUnsafe<{ name: string }[]>(
+      'SELECT name FROM User WHERE lower(name) = ? LIMIT 1',
+      name.toLowerCase(),
+    ),
   )
   const gate = resolveIdGate(name, false, alias.length > 0)
   if (!gate.ok)
@@ -89,7 +92,7 @@ async function enter(req: NextRequest) {
 
   // New name → register. The FIRST user of a fresh instance becomes admin.
   const role = (await needsFirstAdmin()) ? 'admin' : 'user'
-  const user = await db.user.create({ data: { name: gate.id, role } })
+  const user = await withDbRetry((c) => c.user.create({ data: { name: gate.id, role } }))
 
   // The personal node IS the account's server — its routing code is the
   // username itself. Kernel being down must not block sign-up: the UI
@@ -105,7 +108,7 @@ async function enter(req: NextRequest) {
       cache: 'no-store',
     })
     if (res.status === 409) {
-      await db.user.delete({ where: { id: user.id } })
+      await withDbRetry((c) => c.user.delete({ where: { id: user.id } }))
       return NextResponse.json(
         { ok: false, error: 'این نام با نود دیگری در این نودهاست تداخل دارد' },
         { status: 409 },

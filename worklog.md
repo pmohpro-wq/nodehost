@@ -546,3 +546,37 @@ Stage Summary:
 - شناخت حالا متقابل است: اگر A نودهاست B را معرفی کند، B هم در همان handshake نودهاست A را می‌شناسد — بدون هیچ اقدام ادمین سمت B
 - بهداشت: ردیف‌های ghost پاک شدند، تست خودکار به جعبه‌ابزار اضافه شد، UI ساده‌تر شد (یک فیلد کمتر، یک بازخورد واضح‌تر)
 
+
+---
+Task ID: 22
+Agent: main (Z.ai)
+Task: رفع باگ «خطای غیرمنتظرهٔ سرور هنگام ثبت آیدی» — وب‌سرور به inode مردهٔ دیتابیس چسبیده بود
+
+Work Log:
+- گزارش مالک: «هنگام ثبت آیدی برای نودهاست خطا می‌دهد»
+- بازتولید: POST /api/auth/enter با نام جدید انگلیسی معتبر → HTTP 500 با بدنهٔ `{"ok":false,"error":"خطای غیرمنتظرهٔ سرور — لطفاً دوباره تلاش کنید"}`؛ ورود کاربر قدیمی (vvv) 200؛ نام فارسی/زیرخط/کوتاه 422 با پیام قانون (طراحی، نه باگ)
+- ریشه از web.log: `prisma.user.create → SQLite «attempt to write a readonly database»` (extended_code 1032)
+- تشخیص: این همان «stale inode» از Task 17 است — وقتی kernel restart می‌شود و فایل db را بازنویسی می‌کند (inode جدید)، استخر اتصال Prisma وب همچنان به inode قدیمی چسبیده و هر write ای با 1032 می‌میرد. در sandbox ما این هر بار پس از kill/start kernel رخ می‌داد؛ در production روی داکر هم ممکن است بعد از هر restart کانتینر رخ دهد
+- راه‌حل ریشه‌ای (بدون نیاز به restart وب):
+  · `src/lib/db.ts` بازنویسی شد — `db` حالا یک Proxy است که به یک holder mutable (روی globalThis) delegate می‌کند. بعد از `resetDbClient()`، holder با یک PrismaClient تازه عوض می‌شود و همهٔ importers بدون re-import همان کاربر تازه را می‌بینند
+  · `withDbRetry(fn)` — wrapper خود-شفا‌بخش: `fn` را روی db اجرا می‌کند؛ اگر SQLite connection-level error (readonly / disk I/O / no such table) پرت شد، client را یک‌بار reset می‌کند و retry می‌زند. کاربر هرگز 500 نمی‌بیند
+  · تشخیص خطاهای connection-level: `readonly database`, `disk I/O error`, `file is not a database`, `SQLITE_READONLY`, `SQLITE_IOERR`, `no such table` — بقیه خطاها (منطق پراگما، schema) بدون retry بالا می‌آیند چون retry آن‌ها فقط باگ را پنهان می‌کند
+  · `enter/route.ts` — تمام db writes (findUnique برای login، $queryRawUnsafe برای alias scan، user.create، user.delete در rollback) با `withDbRetry` wrap شدند. identity gate قبل از db اجرا می‌شود تا خطاهای اعتبارسنجی همچنان 422 بمانند
+- چرا Proxy به‌جای re-export: در ESM، `export const db` یک binding immutable است — نمی‌توان آن را بعد از import عوض کرد. Proxy به holder mutable، تنها راهی است که `db.user.create(...)` در هر فایل importer بدون تغییر امضا همیشه به latest client برود
+- تست خودکار `scripts/test-registration-stale-db.sh` (جدید): سناریوی کامل stale-db
+  · TEST 1: ثبت‌نام قبل از restart kernel → ok ✓
+  · TEST 2: kill kernel + touch db (inode عوض می‌شود)
+  · TEST 3: ثبت‌نام بعد از kill، وب هنوز روی pool stale → ok (self-healing کار کرد) ✓
+  · TEST 4: ثبت‌نام دوم → ok (pool سالم است) ✓
+  · TEST 5: ورود vvv بعد از stale pool → ok ✓
+  · TEST 6: آیدی نامعتبر هنوز 422 (gate قبل از db) ✓
+  · ۵/۵ سبز
+- تست host-identity (Task 21 همچنان معتبر): ۷/۷ سبز — خطای قبلی مالک از stale pool می‌آمد، نه از منطق host identity
+- tsc تمیز، eslint تمیز، next build موفق
+
+Stage Summary:
+- در «خطای ثبت آیدی»، کد بی‌گناه بود؛ زیرساخت بود: Prisma به inode مرده چسبیده بود
+- وب‌سرور حالا خود-شفا‌بخش است: هر SQLite connection-level error، یک reset + retry شفاف، بدون 500 به کاربر
+- الگوی Proxy-to-holder برای singleton hot-swap در ESM، یک ابزار تمیز برای هر Prisma-deployment که با SQLite کار می‌کند و فایلش ممکن است زیر پای پروسه عوض شود (backup/restore، kernel restart، migration)
+- درس عملیاتی: «state را عوض کردی، پروسهٔ نگه‌دارنده‌اش را تازه کن» (Task 17) — حالا وب خودش این کار را می‌کند، بدون دخالت ادمین
+
