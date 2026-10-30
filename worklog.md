@@ -503,3 +503,5 @@ Stage Summary:
 - اعتبارنامهٔ گیت‌هاب و توکن جدید به‌صورت امن (فایل 0600 + gitignored + helper اسکریپت با GIT_ASKPASS) ثبت شد — توکن هرگز در worklog یا git قرار نمی‌گیرد
 - پوش از این پس یک‌دست: `bash scripts/git-push.sh "<msg>"` → main → کارفرما → داکر
 - توصیهٔ امنیتی به مالک: توکن در یک پیام عمومی ارسال شده بود — پس از اتمام کار، در github.com/settings/tokens این توکن را revoke کنید و توکن تازه بسازید (و فایل `.github-token` را با آن جایگزین کنید)
+
+<!-- push verification marker: 2026-10-30T06:04:21Z -->
